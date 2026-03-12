@@ -256,6 +256,7 @@ export default function App() {
   const [presentationMessage, setPresentationMessage] = useState("");
   const [shareMessage, setShareMessage] = useState("");
   const [newLinkLabel, setNewLinkLabel] = useState("");
+  const [presenterTypographyOpen, setPresenterTypographyOpen] = useState(true);
   const [mobileSection, setMobileSection] = useState("lyrics");
   const [presentationMode, setPresentationMode] = useState("none");
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
@@ -342,6 +343,29 @@ export default function App() {
 
     return active;
   }, [slides, currentSlideIndex]);
+
+  const presenterSectionGroups = useMemo(() => {
+    return linkGroups.map((group) => ({
+      song: group.song,
+      sections: group.links.map((link) => {
+        const slide = slides[link.slideIndex];
+        const preview = slide?.lyricText
+          ? slide.lyricText
+              .split("\n")
+              .filter((line) => line.trim().length > 0)
+              .slice(0, 2)
+              .join(" / ")
+          : "(blank section)";
+
+        return {
+          id: link.id,
+          label: link.label,
+          slideIndex: link.slideIndex,
+          preview
+        };
+      })
+    }));
+  }, [linkGroups, slides]);
 
   useEffect(() => {
     if (isAudienceWindow) {
@@ -1048,45 +1072,55 @@ Rules:
 
                 <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950 p-2">
                   <div className="mb-3 rounded-md border border-zinc-800 bg-zinc-900 p-2">
-                    <p className="mb-2 text-xs text-zinc-300">Presenter Typography</p>
-                    <div className="space-y-2">
-                      <label className="block">
-                        <span className="mb-1 block text-[11px] text-zinc-400">Lyrics Size ({lyricsFontSize}px)</span>
-                        <input
-                          type="range"
-                          min="24"
-                          max="120"
-                          value={lyricsFontSize}
-                          onChange={(event) => setLyricsFontSize(Number(event.target.value))}
-                          className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-700"
-                        />
-                      </label>
+                    <button
+                      type="button"
+                      onClick={() => setPresenterTypographyOpen((prev) => !prev)}
+                      className="flex w-full items-center justify-between text-left text-xs text-zinc-300"
+                    >
+                      <span>Presenter Typography</span>
+                      <span className="text-zinc-500">{presenterTypographyOpen ? "Hide" : "Show"}</span>
+                    </button>
 
-                      <label className="block">
-                        <span className="mb-1 block text-[11px] text-zinc-400">Metadata Size ({metaFontSize}px)</span>
-                        <input
-                          type="range"
-                          min="12"
-                          max="42"
-                          value={metaFontSize}
-                          onChange={(event) => setMetaFontSize(Number(event.target.value))}
-                          className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-700"
-                        />
-                      </label>
+                    {presenterTypographyOpen && (
+                      <div className="mt-2 space-y-2">
+                        <label className="block">
+                          <span className="mb-1 block text-[11px] text-zinc-400">Lyrics Size ({lyricsFontSize}px)</span>
+                          <input
+                            type="range"
+                            min="24"
+                            max="120"
+                            value={lyricsFontSize}
+                            onChange={(event) => setLyricsFontSize(Number(event.target.value))}
+                            className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-700"
+                          />
+                        </label>
 
-                      <label className="block">
-                        <span className="mb-1 block text-[11px] text-zinc-400">Line Spacing ({lyricsLineHeight.toFixed(2)})</span>
-                        <input
-                          type="range"
-                          min="0.9"
-                          max="2"
-                          step="0.02"
-                          value={lyricsLineHeight}
-                          onChange={(event) => setLyricsLineHeight(Number(event.target.value))}
-                          className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-700"
-                        />
-                      </label>
-                    </div>
+                        <label className="block">
+                          <span className="mb-1 block text-[11px] text-zinc-400">Metadata Size ({metaFontSize}px)</span>
+                          <input
+                            type="range"
+                            min="12"
+                            max="42"
+                            value={metaFontSize}
+                            onChange={(event) => setMetaFontSize(Number(event.target.value))}
+                            className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-700"
+                          />
+                        </label>
+
+                        <label className="block">
+                          <span className="mb-1 block text-[11px] text-zinc-400">Line Spacing ({lyricsLineHeight.toFixed(2)})</span>
+                          <input
+                            type="range"
+                            min="0.9"
+                            max="2"
+                            step="0.02"
+                            value={lyricsLineHeight}
+                            onChange={(event) => setLyricsLineHeight(Number(event.target.value))}
+                            className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-700"
+                          />
+                        </label>
+                      </div>
+                    )}
                   </div>
 
                   <p className="mb-2 text-xs text-zinc-400">Jump Links (grouped by song)</p>
@@ -1128,42 +1162,37 @@ Rules:
               />
 
               <aside className="min-h-0 flex-1 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950 p-2">
-                <p className="mb-2 text-xs text-zinc-400">All Slides (click to jump)</p>
-                <div
-                  className="grid gap-2"
-                  style={{ gridTemplateColumns: `repeat(${presenterThumbColumns}, minmax(0, 1fr))` }}
-                >
-                  {slides.map((slide, index) => (
-                    <button
-                      key={`presenter-thumb-${slide.id}`}
-                      type="button"
-                      onClick={() => setCurrentSlideIndex(index)}
-                      className={`w-full rounded-md border p-1 text-left transition ${
-                        index === currentSlideIndex
-                          ? "border-zinc-300 bg-zinc-800"
-                          : "border-zinc-700 bg-zinc-900 hover:bg-zinc-800"
-                      }`}
-                    >
-                      <div className="mb-1 text-[10px] text-zinc-400">Slide {index + 1}</div>
-                      <article className="relative flex aspect-video w-full items-center justify-center bg-black" style={{ fontFamily }}>
-                        {!slide.isBlank && (
-                          <p
-                            className="w-[88%] whitespace-pre-line text-center font-bold text-white"
-                            style={{ fontSize: `${Math.max(lyricsFontSize * 0.18, 8)}px`, lineHeight: lyricsLineHeight }}
+                <p className="mb-2 text-xs text-zinc-400">Section Navigator</p>
+                <div className="space-y-3">
+                  {presenterSectionGroups.map((group) => (
+                    <div key={`section-nav-${group.song}`}>
+                      <p className="mb-1 text-[11px] text-zinc-500">{group.song}</p>
+                      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${presenterThumbColumns}, minmax(0, 1fr))` }}>
+                        {group.sections.map((section) => (
+                          <button
+                            key={section.id}
+                            type="button"
+                            onClick={() => setCurrentSlideIndex(section.slideIndex)}
+                            className={`rounded-md border p-2 text-left transition-all duration-150 ${
+                              currentSongName === group.song && activeLinkBySong.get(group.song) === section.id
+                                ? "border-zinc-300 bg-zinc-200 text-zinc-900 shadow-sm"
+                                : "border-zinc-700 bg-zinc-900 text-zinc-200 hover:-translate-y-[1px] hover:border-zinc-500 hover:bg-zinc-800"
+                            }`}
                           >
-                            {slide.lyricText}
-                          </p>
-                        )}
-                        {slide.meta && !slide.isBlank && (
-                          <p
-                            className="absolute bottom-[5.5%] left-1/2 w-[92%] -translate-x-1/2 text-center font-normal text-white"
-                            style={{ fontSize: `${Math.max(metaFontSize * 0.2, 7)}px` }}
-                          >
-                            {slide.meta}
-                          </p>
-                        )}
-                      </article>
-                    </button>
+                            <p className="text-[11px] font-semibold">{section.label}</p>
+                            <p
+                              className={`mt-1 text-[11px] leading-snug ${
+                                currentSongName === group.song && activeLinkBySong.get(group.song) === section.id
+                                  ? "text-zinc-700"
+                                  : "text-zinc-400"
+                              }`}
+                            >
+                              {section.preview}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
               </aside>
