@@ -82,6 +82,33 @@ const DEFAULT_SETTINGS = {
 const PRESENTATION_CHANNEL = "worshipDeck.presentation";
 const SLIDE_BASE_WIDTH = 1600;
 const SLIDE_BASE_HEIGHT = 900;
+const URL_LYRICS_PARAM = "lyrics";
+
+function encodeLyricsForUrl(value) {
+  try {
+    const bytes = new TextEncoder().encode(value);
+    let binary = "";
+    bytes.forEach((byte) => {
+      binary += String.fromCharCode(byte);
+    });
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function decodeLyricsFromUrl(encodedValue) {
+  try {
+    const normalized = encodedValue.replace(/-/g, "+").replace(/_/g, "/");
+    const paddingLength = (4 - (normalized.length % 4)) % 4;
+    const padded = `${normalized}${"=".repeat(paddingLength)}`;
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
+  }
+}
 
 function PresentationSlide({ slide, fontFamily, lyricsFontSize, metaFontSize, lyricsLineHeight, className = "" }) {
   const viewportRef = useRef(null);
@@ -209,12 +236,25 @@ export default function App() {
     return new URLSearchParams(window.location.search).get("audience") === "1";
   }, []);
 
-  const [input, setInput] = useState(() => localStorage.getItem(STORAGE_KEYS.lyricsInput) || DEFAULT_INPUT);
+  const initialInput = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    const encodedLyrics = params.get(URL_LYRICS_PARAM);
+    if (encodedLyrics) {
+      const decodedLyrics = decodeLyricsFromUrl(encodedLyrics);
+      if (decodedLyrics !== null) {
+        return decodedLyrics;
+      }
+    }
+    return localStorage.getItem(STORAGE_KEYS.lyricsInput) || DEFAULT_INPUT;
+  }, []);
+
+  const [input, setInput] = useState(initialInput);
   const [isExporting, setIsExporting] = useState(false);
   const [copyingSlideId, setCopyingSlideId] = useState(null);
   const [copyMessage, setCopyMessage] = useState("");
   const [guideMessage, setGuideMessage] = useState("");
   const [presentationMessage, setPresentationMessage] = useState("");
+  const [shareMessage, setShareMessage] = useState("");
   const [newLinkLabel, setNewLinkLabel] = useState("");
   const [mobileSection, setMobileSection] = useState("lyrics");
   const [presentationMode, setPresentationMode] = useState("none");
@@ -309,6 +349,21 @@ export default function App() {
     }
 
     localStorage.setItem(STORAGE_KEYS.lyricsInput, input);
+
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+      if (input.trim().length > 0) {
+        params.set(URL_LYRICS_PARAM, encodeLyricsForUrl(input));
+      } else {
+        params.delete(URL_LYRICS_PARAM);
+      }
+
+      const query = params.toString();
+      const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+      window.history.replaceState(null, "", nextUrl);
+    }, 220);
+
+    return () => window.clearTimeout(timer);
   }, [input, isAudienceWindow]);
 
   useEffect(() => {
@@ -623,6 +678,31 @@ export default function App() {
     });
   };
 
+  const handleCopyShareUrl = async () => {
+    if (!navigator.clipboard) {
+      setShareMessage("Clipboard is not available in this browser.");
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    if (input.trim().length > 0) {
+      params.set(URL_LYRICS_PARAM, encodeLyricsForUrl(input));
+    } else {
+      params.delete(URL_LYRICS_PARAM);
+    }
+
+    params.delete("audience");
+    const query = params.toString();
+    const shareUrl = `${window.location.origin}${window.location.pathname}${query ? `?${query}` : ""}`;
+
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareMessage("Share URL copied.");
+    } catch {
+      setShareMessage("Could not copy share URL.");
+    }
+  };
+
 
   const startMainDividerDrag = (event) => {
     if (!presenterLayoutRef.current) {
@@ -814,8 +894,16 @@ export default function App() {
               >
                 Insert [[Link]]
               </button>
+              <button
+                type="button"
+                onClick={handleCopyShareUrl}
+                className="h-8 rounded-md border border-zinc-300 bg-white px-2.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100"
+              >
+                Copy Share URL
+              </button>
             </div>
           </div>
+          {shareMessage && <p className="mb-2 text-xs text-zinc-500">{shareMessage}</p>}
           <textarea
             ref={lyricsInputRef}
             id="lyrics-input"
