@@ -216,6 +216,7 @@ export default function App() {
   const [guideMessage, setGuideMessage] = useState("");
   const [presentationMessage, setPresentationMessage] = useState("");
   const [newLinkLabel, setNewLinkLabel] = useState("");
+  const [mobileSection, setMobileSection] = useState("lyrics");
   const [presentationMode, setPresentationMode] = useState("none");
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [presenterLeftWidth, setPresenterLeftWidth] = useState(58);
@@ -303,8 +304,12 @@ export default function App() {
   }, [slides, currentSlideIndex]);
 
   useEffect(() => {
+    if (isAudienceWindow) {
+      return;
+    }
+
     localStorage.setItem(STORAGE_KEYS.lyricsInput, input);
-  }, [input]);
+  }, [input, isAudienceWindow]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.lyricsFontSize, String(lyricsFontSize));
@@ -618,6 +623,7 @@ export default function App() {
     });
   };
 
+
   const startMainDividerDrag = (event) => {
     if (!presenterLayoutRef.current) {
       return;
@@ -685,7 +691,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-100 p-4 text-zinc-900 md:p-6">
+    <div className="min-h-screen bg-zinc-100 p-4 pb-20 text-zinc-900 md:p-6 md:pb-6">
       <header className="mx-auto mb-4 flex w-full max-w-[1700px] flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Worship Deck Generator</h1>
@@ -782,7 +788,7 @@ export default function App() {
       </div>
 
       <main className="mx-auto grid w-full max-w-[1700px] gap-4 lg:grid-cols-2">
-        <section className="rounded-md border border-zinc-200 bg-white p-4">
+        <section className={`rounded-md border border-zinc-200 bg-white p-4 ${mobileSection !== "lyrics" ? "hidden md:block" : "block"}`}>
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <label htmlFor="lyrics-input" className="block text-sm font-medium text-zinc-800">
               Lyrics Input
@@ -827,7 +833,7 @@ Rules:
           />
         </section>
 
-        <section className="rounded-md border border-zinc-200 bg-white p-4">
+        <section className={`rounded-md border border-zinc-200 bg-white p-4 ${mobileSection !== "slides" ? "hidden md:block" : "block"}`}>
           <h2 className="mb-2 text-sm font-medium text-zinc-800">Slide Preview (16:9)</h2>
           <div className="h-[70vh] space-y-4 overflow-y-auto rounded-md border border-zinc-200 bg-zinc-50 p-3">
             {slides.map((slide, index) => (
@@ -881,7 +887,11 @@ Rules:
         </section>
       </main>
 
-      <section className="mx-auto mt-4 w-full max-w-[1700px] rounded-md border border-zinc-200 bg-white p-4">
+      <section
+        className={`mx-auto mt-4 w-full max-w-[1700px] rounded-md border border-zinc-200 bg-white p-4 ${
+          mobileSection !== "prompt" ? "hidden md:block" : "block"
+        }`}
+      >
         <div className="mb-2 flex items-center justify-between gap-2">
           <h2 className="text-sm font-medium text-zinc-800">How Formatting Works (for LLM prep)</h2>
           <button
@@ -1030,6 +1040,40 @@ Rules:
             </div>
           )}
         </div>
+      )}
+
+      {presentationMode === "none" && (
+        <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-200 bg-white/95 backdrop-blur md:hidden">
+          <div className="mx-auto grid max-w-[1700px] grid-cols-3">
+            <button
+              type="button"
+              onClick={() => setMobileSection("lyrics")}
+              className={`h-12 text-xs font-medium transition ${
+                mobileSection === "lyrics" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"
+              }`}
+            >
+              Lyrics Input
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileSection("slides")}
+              className={`h-12 border-l border-r border-zinc-200 text-xs font-medium transition ${
+                mobileSection === "slides" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"
+              }`}
+            >
+              Slides
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileSection("prompt")}
+              className={`h-12 text-xs font-medium transition ${
+                mobileSection === "prompt" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"
+              }`}
+            >
+              Prompt
+            </button>
+          </div>
+        </nav>
       )}
     </div>
   );
