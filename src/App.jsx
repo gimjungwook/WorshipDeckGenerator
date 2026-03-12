@@ -1047,6 +1047,48 @@ Rules:
                 />
 
                 <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950 p-2">
+                  <div className="mb-3 rounded-md border border-zinc-800 bg-zinc-900 p-2">
+                    <p className="mb-2 text-xs text-zinc-300">Presenter Typography</p>
+                    <div className="space-y-2">
+                      <label className="block">
+                        <span className="mb-1 block text-[11px] text-zinc-400">Lyrics Size ({lyricsFontSize}px)</span>
+                        <input
+                          type="range"
+                          min="24"
+                          max="120"
+                          value={lyricsFontSize}
+                          onChange={(event) => setLyricsFontSize(Number(event.target.value))}
+                          className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-700"
+                        />
+                      </label>
+
+                      <label className="block">
+                        <span className="mb-1 block text-[11px] text-zinc-400">Metadata Size ({metaFontSize}px)</span>
+                        <input
+                          type="range"
+                          min="12"
+                          max="42"
+                          value={metaFontSize}
+                          onChange={(event) => setMetaFontSize(Number(event.target.value))}
+                          className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-700"
+                        />
+                      </label>
+
+                      <label className="block">
+                        <span className="mb-1 block text-[11px] text-zinc-400">Line Spacing ({lyricsLineHeight.toFixed(2)})</span>
+                        <input
+                          type="range"
+                          min="0.9"
+                          max="2"
+                          step="0.02"
+                          value={lyricsLineHeight}
+                          onChange={(event) => setLyricsLineHeight(Number(event.target.value))}
+                          className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-700"
+                        />
+                      </label>
+                    </div>
+                  </div>
+
                   <p className="mb-2 text-xs text-zinc-400">Jump Links (grouped by song)</p>
                   <div className="space-y-3">
                     {linkGroups.map((group) => (
