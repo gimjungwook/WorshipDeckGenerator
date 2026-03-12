@@ -257,6 +257,7 @@ export default function App() {
   const [shareMessage, setShareMessage] = useState("");
   const [newLinkLabel, setNewLinkLabel] = useState("");
   const [presenterTypographyOpen, setPresenterTypographyOpen] = useState(true);
+  const [presenterNavigatorTextSize, setPresenterNavigatorTextSize] = useState(11);
   const [mobileSection, setMobileSection] = useState("lyrics");
   const [presentationMode, setPresentationMode] = useState("none");
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
@@ -1119,15 +1120,34 @@ Rules:
                             className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-700"
                           />
                         </label>
+
+                        <label className="block">
+                          <span className="mb-1 block text-[11px] text-zinc-400">
+                            Navigator Text Size ({presenterNavigatorTextSize}px)
+                          </span>
+                          <input
+                            type="range"
+                            min="10"
+                            max="18"
+                            step="1"
+                            value={presenterNavigatorTextSize}
+                            onChange={(event) => setPresenterNavigatorTextSize(Number(event.target.value))}
+                            className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-700"
+                          />
+                        </label>
                       </div>
                     )}
                   </div>
 
-                  <p className="mb-2 text-xs text-zinc-400">Jump Links (grouped by song)</p>
+                  <p className="mb-2 text-xs text-zinc-400" style={{ fontSize: `${presenterNavigatorTextSize}px` }}>
+                    Jump Links (grouped by song)
+                  </p>
                   <div className="space-y-3">
                     {linkGroups.map((group) => (
                       <div key={`links-${group.song}`}>
-                        <p className="mb-1 text-[11px] text-zinc-500">{group.song}</p>
+                        <p className="mb-1 text-zinc-500" style={{ fontSize: `${presenterNavigatorTextSize}px` }}>
+                          {group.song}
+                        </p>
                         <div className="flex flex-wrap gap-1.5">
                           {group.links.length > 0 ? (
                             group.links.map((link) => (
@@ -1135,17 +1155,20 @@ Rules:
                                 key={link.id}
                                 type="button"
                                 onClick={() => setCurrentSlideIndex(link.slideIndex)}
-                                className={`rounded-md border px-2 py-1 text-[11px] transition ${
+                                className={`rounded-md border px-2 py-1 transition ${
                                   currentSongName === group.song && activeLinkBySong.get(group.song) === link.id
                                     ? "border-zinc-300 bg-zinc-200 text-zinc-900"
                                     : "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
                                 }`}
+                                style={{ fontSize: `${presenterNavigatorTextSize}px` }}
                               >
                                 {link.label}
                               </button>
                             ))
                           ) : (
-                            <span className="text-[11px] text-zinc-600">No link markers</span>
+                            <span className="text-zinc-600" style={{ fontSize: `${presenterNavigatorTextSize}px` }}>
+                              No link markers
+                            </span>
                           )}
                         </div>
                       </div>
@@ -1162,11 +1185,15 @@ Rules:
               />
 
               <aside className="min-h-0 flex-1 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950 p-2">
-                <p className="mb-2 text-xs text-zinc-400">Section Navigator</p>
+                <p className="mb-2 text-xs text-zinc-400" style={{ fontSize: `${presenterNavigatorTextSize}px` }}>
+                  Section Navigator
+                </p>
                 <div className="space-y-3">
                   {presenterSectionGroups.map((group) => (
                     <div key={`section-nav-${group.song}`}>
-                      <p className="mb-1 text-[11px] text-zinc-500">{group.song}</p>
+                      <p className="mb-1 text-zinc-500" style={{ fontSize: `${presenterNavigatorTextSize}px` }}>
+                        {group.song}
+                      </p>
                       <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${presenterThumbColumns}, minmax(0, 1fr))` }}>
                         {group.sections.map((section) => (
                           <button
@@ -1179,13 +1206,16 @@ Rules:
                                 : "border-zinc-700 bg-zinc-900 text-zinc-200 hover:-translate-y-[1px] hover:border-zinc-500 hover:bg-zinc-800"
                             }`}
                           >
-                            <p className="text-[11px] font-semibold">{section.label}</p>
+                            <p className="font-semibold" style={{ fontSize: `${presenterNavigatorTextSize}px` }}>
+                              {section.label}
+                            </p>
                             <p
-                              className={`mt-1 text-[11px] leading-snug ${
+                              className={`mt-1 leading-snug ${
                                 currentSongName === group.song && activeLinkBySong.get(group.song) === section.id
                                   ? "text-zinc-700"
                                   : "text-zinc-400"
                               }`}
+                              style={{ fontSize: `${Math.max(presenterNavigatorTextSize - 1, 10)}px` }}
                             >
                               {section.preview}
                             </p>
