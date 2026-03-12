@@ -266,18 +266,18 @@ export default function App() {
     slides.forEach((slide, index) => {
       const groupName = slide.meta || "Unlabeled Song";
       if (!groupByMeta.has(groupName)) {
-        const group = { song: groupName, links: [], seen: new Set() };
+        const group = { song: groupName, links: [] };
         groupByMeta.set(groupName, group);
         groups.push(group);
       }
 
       const group = groupByMeta.get(groupName);
-      slide.linkTargets.forEach((label) => {
-        const key = label.toLowerCase();
-        if (!group.seen.has(key)) {
-          group.seen.add(key);
-          group.links.push({ label, slideIndex: index });
-        }
+      slide.linkTargets.forEach((label, linkOrder) => {
+        group.links.push({
+          id: `${groupName}-${index}-${linkOrder}`,
+          label,
+          slideIndex: index
+        });
       });
     });
 
@@ -294,9 +294,9 @@ export default function App() {
       const slide = slides[i];
       const songName = slide.meta || "Unlabeled Song";
 
-      if (slide.linkTargets.length > 0) {
-        active.set(songName, slide.linkTargets[slide.linkTargets.length - 1]);
-      }
+      slide.linkTargets.forEach((label, linkOrder) => {
+        active.set(songName, `${songName}-${i}-${linkOrder}`);
+      });
     }
 
     return active;
@@ -958,11 +958,11 @@ Rules:
                           {group.links.length > 0 ? (
                             group.links.map((link) => (
                               <button
-                                key={`${group.song}-${link.label}`}
+                                key={link.id}
                                 type="button"
                                 onClick={() => setCurrentSlideIndex(link.slideIndex)}
                                 className={`rounded-md border px-2 py-1 text-[11px] transition ${
-                                  currentSongName === group.song && activeLinkBySong.get(group.song) === link.label
+                                  currentSongName === group.song && activeLinkBySong.get(group.song) === link.id
                                     ? "border-zinc-300 bg-zinc-200 text-zinc-900"
                                     : "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
                                 }`}
