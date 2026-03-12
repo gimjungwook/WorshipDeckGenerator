@@ -1,22 +1,26 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 
 const DEFAULT_INPUT = `# Example Song - Example Artist
 /* Intro */
+[[Intro]]
 Opening instrumental
 //
 
 //
 /* Verse 1 */
+[[Verse 1]]
 Line one of the verse / line two of the verse
 Line three of the verse
 //
 <!-- Chorus -->
+[[Chorus]]
 Chorus line one / chorus line two / chorus line three
 //
 # Second Song - Another Artist
 /* Bridge */
+[[Bridge]]
 Bridge line one / bridge line two`;
 
 const LLM_PREP_PROMPT = `Convert the song lyrics below into Worship Deck Generator format.
@@ -34,9 +38,19 @@ Output rules:
 /* Verse 1 */
 /* Chorus */
 /* Bridge */
-8) Do not accidentally repeat lyrics. Analyze the full song structure first, then output each lyric part once per intended occurrence.
-9) Only keep repeated parts when the original song intentionally repeats them in sequence.
-10) Do not add any explanation text, only the final formatted result.
+8) Also place jump-link markers with double brackets before major sections, for example:
+[[Intro]]
+[[Verse 1]]
+[[Chorus]]
+[[Bridge]]
+9) Do not accidentally repeat lyrics. Analyze the full song structure first, then output each lyric part once per intended occurrence.
+10) Only keep repeated parts when the original song intentionally repeats them in sequence.
+11) Never add divider/separator lines such as --- , ___ , === , or similar decorative lines.
+12) Return the final formatted result inside a markdown code block with plaintext language tag. Use this exact wrapper:
+\`\`\`plaintext
+[formatted lyrics here]
+\`\`\`
+13) Do not add any explanation text outside the code block.
 
 Lyrics to format:
 [PASTE RAW LYRICS HERE]`;
@@ -65,6 +79,77 @@ const DEFAULT_SETTINGS = {
   lyricsLineHeight: 1.6
 };
 
+const PRESENTATION_CHANNEL = "worshipDeck.presentation";
+const SLIDE_BASE_WIDTH = 1600;
+const SLIDE_BASE_HEIGHT = 900;
+
+function PresentationSlide({ slide, fontFamily, lyricsFontSize, metaFontSize, lyricsLineHeight, className = "" }) {
+  const viewportRef = useRef(null);
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    if (!viewportRef.current) {
+      return;
+    }
+
+    const updateScale = () => {
+      if (!viewportRef.current) {
+        return;
+      }
+
+      const rect = viewportRef.current.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        return;
+      }
+
+      const fitScale = Math.min(rect.width / SLIDE_BASE_WIDTH, rect.height / SLIDE_BASE_HEIGHT);
+      setScale(fitScale);
+    };
+
+    updateScale();
+    const resizeObserver = new ResizeObserver(updateScale);
+    resizeObserver.observe(viewportRef.current);
+    window.addEventListener("resize", updateScale);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateScale);
+    };
+  }, []);
+
+  return (
+    <div ref={viewportRef} className={`relative h-full w-full overflow-hidden bg-black ${className}`}>
+      <article
+        className="absolute left-1/2 top-1/2 bg-black"
+        style={{
+          width: `${SLIDE_BASE_WIDTH}px`,
+          height: `${SLIDE_BASE_HEIGHT}px`,
+          transform: `translate(-50%, -50%) scale(${scale})`,
+          transformOrigin: "center center",
+          fontFamily
+        }}
+      >
+        {!slide?.isBlank && (
+          <p
+            className="absolute left-1/2 top-1/2 w-[88%] -translate-x-1/2 -translate-y-1/2 whitespace-pre-line text-center font-bold text-white"
+            style={{ fontSize: `${lyricsFontSize}px`, lineHeight: lyricsLineHeight }}
+          >
+            {slide.lyricText}
+          </p>
+        )}
+        {slide?.meta && !slide.isBlank && (
+          <p
+            className="absolute bottom-[5.5%] left-1/2 w-[92%] -translate-x-1/2 text-center font-normal text-white"
+            style={{ fontSize: `${metaFontSize}px` }}
+          >
+            {slide.meta}
+          </p>
+        )}
+      </article>
+    </div>
+  );
+}
+
 function parseSlides(rawText) {
   const segments = rawText.split("//");
   let currentMeta = "";
@@ -73,9 +158,14 @@ function parseSlides(rawText) {
     return /^\/\*.*\*\/$/.test(line) || /^<!--.*-->$/.test(line);
   };
 
+  const isDividerLine = (line) => {
+    return /^[-_=]{3,}$/.test(line.replace(/\s/g, ""));
+  };
+
   return segments.map((segment, index) => {
     const lines = segment.split(/\r?\n/);
     const lyricLines = [];
+    const linkTargets = [];
 
     lines.forEach((line) => {
       const trimmed = line.trim();
@@ -83,8 +173,22 @@ function parseSlides(rawText) {
         currentMeta = trimmed.slice(1).trim();
       } else if (isSectionCommentLine(trimmed)) {
         return;
+      } else if (isDividerLine(trimmed)) {
+        return;
       } else {
-        lyricLines.push(line);
+        const lineLinkMatches = [...line.matchAll(/\[\[([^\]]+)\]\]/g)]
+          .map((match) => match[1].trim())
+          .filter(Boolean);
+
+        if (lineLinkMatches.length > 0) {
+          lineLinkMatches.forEach((label) => {
+            if (!linkTargets.includes(label)) {
+              linkTargets.push(label);
+            }
+          });
+        }
+
+        lyricLines.push(line.replace(/\[\[[^\]]+\]\]/g, "").trimEnd());
       }
     });
 
@@ -94,17 +198,40 @@ function parseSlides(rawText) {
       id: `slide-${index + 1}`,
       lyricText,
       meta: currentMeta,
+      linkTargets,
       isBlank: lyricText.length === 0
     };
   });
 }
 
 export default function App() {
+  const isAudienceWindow = useMemo(() => {
+    return new URLSearchParams(window.location.search).get("audience") === "1";
+  }, []);
+
   const [input, setInput] = useState(() => localStorage.getItem(STORAGE_KEYS.lyricsInput) || DEFAULT_INPUT);
   const [isExporting, setIsExporting] = useState(false);
   const [copyingSlideId, setCopyingSlideId] = useState(null);
   const [copyMessage, setCopyMessage] = useState("");
   const [guideMessage, setGuideMessage] = useState("");
+  const [presentationMessage, setPresentationMessage] = useState("");
+  const [newLinkLabel, setNewLinkLabel] = useState("");
+  const [presentationMode, setPresentationMode] = useState("none");
+  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const [presenterLeftWidth, setPresenterLeftWidth] = useState(58);
+  const [presenterTopHeight, setPresenterTopHeight] = useState(62);
+  const audienceWindowRef = useRef(null);
+  const lyricsInputRef = useRef(null);
+  const presenterLayoutRef = useRef(null);
+  const presenterLeftPaneRef = useRef(null);
+  const [audienceState, setAudienceState] = useState({
+    slides: [],
+    currentSlideIndex: 0,
+    fontFamily: DEFAULT_SETTINGS.fontFamily,
+    lyricsFontSize: DEFAULT_SETTINGS.lyricsFontSize,
+    metaFontSize: DEFAULT_SETTINGS.metaFontSize,
+    lyricsLineHeight: DEFAULT_SETTINGS.lyricsLineHeight
+  });
   const [lyricsFontSize, setLyricsFontSize] = useState(() => {
     const value = Number(localStorage.getItem(STORAGE_KEYS.lyricsFontSize));
     return Number.isFinite(value) && value >= 24 && value <= 120
@@ -128,6 +255,53 @@ export default function App() {
 
   const slides = useMemo(() => parseSlides(input), [input]);
 
+  const currentSlide = slides[currentSlideIndex] || slides[0];
+  const currentSongName = currentSlide?.meta || "Unlabeled Song";
+  const presenterThumbColumns = presenterLeftWidth <= 50 ? 2 : 1;
+
+  const linkGroups = useMemo(() => {
+    const groups = [];
+    const groupByMeta = new Map();
+
+    slides.forEach((slide, index) => {
+      const groupName = slide.meta || "Unlabeled Song";
+      if (!groupByMeta.has(groupName)) {
+        const group = { song: groupName, links: [], seen: new Set() };
+        groupByMeta.set(groupName, group);
+        groups.push(group);
+      }
+
+      const group = groupByMeta.get(groupName);
+      slide.linkTargets.forEach((label) => {
+        const key = label.toLowerCase();
+        if (!group.seen.has(key)) {
+          group.seen.add(key);
+          group.links.push({ label, slideIndex: index });
+        }
+      });
+    });
+
+    return groups.map((group) => ({
+      song: group.song,
+      links: group.links
+    }));
+  }, [slides]);
+
+  const activeLinkBySong = useMemo(() => {
+    const active = new Map();
+
+    for (let i = 0; i <= currentSlideIndex && i < slides.length; i += 1) {
+      const slide = slides[i];
+      const songName = slide.meta || "Unlabeled Song";
+
+      if (slide.linkTargets.length > 0) {
+        active.set(songName, slide.linkTargets[slide.linkTargets.length - 1]);
+      }
+    }
+
+    return active;
+  }, [slides, currentSlideIndex]);
+
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.lyricsInput, input);
   }, [input]);
@@ -147,6 +321,153 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.lyricsLineHeight, String(lyricsLineHeight));
   }, [lyricsLineHeight]);
+
+  useEffect(() => {
+    if (!isAudienceWindow || typeof BroadcastChannel === "undefined") {
+      return;
+    }
+
+    const channel = new BroadcastChannel(PRESENTATION_CHANNEL);
+
+    channel.onmessage = (event) => {
+      const message = event.data;
+      if (message?.type === "sync" && message.payload) {
+        setAudienceState(message.payload);
+      }
+      if (message?.type === "stop") {
+        setAudienceState((prev) => ({
+          ...prev,
+          slides: [],
+          currentSlideIndex: 0
+        }));
+      }
+    };
+
+    channel.postMessage({ type: "audience-ready" });
+    return () => channel.close();
+  }, [isAudienceWindow]);
+
+  useEffect(() => {
+    if (isAudienceWindow || presentationMode !== "presenter" || typeof BroadcastChannel === "undefined") {
+      return;
+    }
+
+    const payload = {
+      slides,
+      currentSlideIndex,
+      fontFamily,
+      lyricsFontSize,
+      metaFontSize,
+      lyricsLineHeight
+    };
+    const channel = new BroadcastChannel(PRESENTATION_CHANNEL);
+
+    const sync = () => {
+      channel.postMessage({ type: "sync", payload });
+    };
+
+    channel.onmessage = (event) => {
+      if (event.data?.type === "audience-ready") {
+        sync();
+      }
+    };
+
+    sync();
+    const timer = window.setInterval(sync, 700);
+
+    return () => {
+      window.clearInterval(timer);
+      channel.close();
+    };
+  }, [
+    isAudienceWindow,
+    presentationMode,
+    slides,
+    currentSlideIndex,
+    fontFamily,
+    lyricsFontSize,
+    metaFontSize,
+    lyricsLineHeight
+  ]);
+
+  useEffect(() => {
+    if (isAudienceWindow || presentationMode !== "none") {
+      return;
+    }
+
+    if (audienceWindowRef.current && !audienceWindowRef.current.closed) {
+      audienceWindowRef.current.close();
+    }
+    audienceWindowRef.current = null;
+
+    if (typeof BroadcastChannel !== "undefined") {
+      const channel = new BroadcastChannel(PRESENTATION_CHANNEL);
+      channel.postMessage({ type: "stop" });
+      channel.close();
+    }
+
+    if (document.fullscreenElement && document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    }
+  }, [presentationMode, isAudienceWindow]);
+
+  useEffect(() => {
+    if (presentationMode === "none") {
+      return;
+    }
+
+    const onKeyDown = (event) => {
+      if (["ArrowRight", "PageDown", " ", "Enter"].includes(event.key)) {
+        event.preventDefault();
+        setCurrentSlideIndex((prev) => Math.min(prev + 1, slides.length - 1));
+      }
+
+      if (["ArrowLeft", "PageUp"].includes(event.key)) {
+        event.preventDefault();
+        setCurrentSlideIndex((prev) => Math.max(prev - 1, 0));
+      }
+
+      if (event.key === "Home") {
+        event.preventDefault();
+        setCurrentSlideIndex(0);
+      }
+
+      if (event.key === "End") {
+        event.preventDefault();
+        setCurrentSlideIndex(Math.max(slides.length - 1, 0));
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setPresentationMode("none");
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [presentationMode, slides.length]);
+
+  useEffect(() => {
+    if (presentationMode === "none" || slides.length === 0) {
+      return;
+    }
+
+    if (currentSlideIndex > slides.length - 1) {
+      setCurrentSlideIndex(slides.length - 1);
+    }
+  }, [slides.length, currentSlideIndex, presentationMode]);
+
+  useEffect(() => {
+    if (presentationMode === "none") {
+      document.body.style.overflow = "";
+      return;
+    }
+
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [presentationMode]);
 
   const captureSlide = (element) => {
     return html2canvas(element, {
@@ -237,6 +558,132 @@ export default function App() {
     }
   };
 
+  const handleStartPresentation = async (mode) => {
+    if (slides.length === 0) {
+      return;
+    }
+
+    setPresentationMessage("");
+    setCurrentSlideIndex(0);
+    setPresentationMode(mode);
+
+    if (mode === "presenter") {
+      const audienceUrl = `${window.location.origin}${window.location.pathname}?audience=1`;
+      const audienceWindow = window.open(audienceUrl, "worshipDeckAudience", "width=1400,height=900");
+
+      if (!audienceWindow) {
+        setPresentationMode("none");
+        setPresentationMessage("Could not open audience tab. Please allow pop-ups and try again.");
+      } else {
+        audienceWindowRef.current = audienceWindow;
+        setPresentationMessage("Presenter mode started. Audience view opened in a second tab.");
+      }
+      return;
+    }
+
+    if (document.fullscreenElement || !document.documentElement.requestFullscreen) {
+      return;
+    }
+
+    try {
+      await document.documentElement.requestFullscreen();
+    } catch {
+      return;
+    }
+  };
+
+  const handleStopPresentation = () => {
+    setPresentationMode("none");
+  };
+
+  const handleInsertLinkMarker = () => {
+    const label = newLinkLabel.trim();
+    if (!label || !lyricsInputRef.current) {
+      return;
+    }
+
+    const marker = `[[${label}]]`;
+    const textarea = lyricsInputRef.current;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const nextValue = `${input.slice(0, start)}${marker}${input.slice(end)}`;
+
+    setInput(nextValue);
+    setNewLinkLabel("");
+
+    window.requestAnimationFrame(() => {
+      const cursor = start + marker.length;
+      textarea.focus();
+      textarea.setSelectionRange(cursor, cursor);
+    });
+  };
+
+  const startMainDividerDrag = (event) => {
+    if (!presenterLayoutRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    const rect = presenterLayoutRef.current.getBoundingClientRect();
+
+    const onMove = (moveEvent) => {
+      const ratio = ((moveEvent.clientX - rect.left) / rect.width) * 100;
+      setPresenterLeftWidth(Math.min(78, Math.max(32, ratio)));
+    };
+
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const startLeftDividerDrag = (event) => {
+    if (!presenterLeftPaneRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    const rect = presenterLeftPaneRef.current.getBoundingClientRect();
+
+    const onMove = (moveEvent) => {
+      const ratio = ((moveEvent.clientY - rect.top) / rect.height) * 100;
+      setPresenterTopHeight(Math.min(82, Math.max(28, ratio)));
+    };
+
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  if (isAudienceWindow) {
+    const audienceSlides = audienceState.slides;
+    const safeIndex = Math.min(audienceState.currentSlideIndex, Math.max(audienceSlides.length - 1, 0));
+    const audienceSlide = audienceSlides[safeIndex];
+
+    return (
+      <div className="fixed inset-0 bg-black text-white">
+        <div className="flex h-full items-center justify-center p-4">
+          <div className="h-full w-full">
+            <PresentationSlide
+              slide={audienceSlide || { isBlank: true, lyricText: "", meta: "" }}
+              fontFamily={audienceState.fontFamily}
+              lyricsFontSize={audienceState.lyricsFontSize}
+              metaFontSize={audienceState.metaFontSize}
+              lyricsLineHeight={audienceState.lyricsLineHeight}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-zinc-100 p-4 text-zinc-900 md:p-6">
       <header className="mx-auto mb-4 flex w-full max-w-[1700px] flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -246,16 +693,33 @@ export default function App() {
             Paste lyrics, preview slides live, and export a PDF deck.
           </p>
           {copyMessage && <p className="mt-1 text-xs text-zinc-500">{copyMessage}</p>}
+          {presentationMessage && <p className="mt-1 text-xs text-zinc-500">{presentationMessage}</p>}
         </div>
 
-        <button
-          type="button"
-          onClick={handleExportPdf}
-          disabled={isExporting}
-          className="h-10 rounded-md border border-zinc-900 bg-zinc-900 px-5 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {isExporting ? "Exporting..." : "Export to PDF"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => handleStartPresentation("fullscreen")}
+            className="h-10 rounded-md border border-zinc-300 bg-white px-5 text-sm font-medium text-zinc-800 transition hover:bg-zinc-100"
+          >
+            Start Fullscreen
+          </button>
+          <button
+            type="button"
+            onClick={() => handleStartPresentation("presenter")}
+            className="h-10 rounded-md border border-zinc-300 bg-white px-5 text-sm font-medium text-zinc-800 transition hover:bg-zinc-100"
+          >
+            Start Presenter
+          </button>
+          <button
+            type="button"
+            onClick={handleExportPdf}
+            disabled={isExporting}
+            className="h-10 rounded-md border border-zinc-900 bg-zinc-900 px-5 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isExporting ? "Exporting..." : "Export to PDF"}
+          </button>
+        </div>
       </header>
 
       <div className="mx-auto mb-4 w-full max-w-[1700px] rounded-md border border-zinc-200 bg-white p-4">
@@ -319,10 +783,35 @@ export default function App() {
 
       <main className="mx-auto grid w-full max-w-[1700px] gap-4 lg:grid-cols-2">
         <section className="rounded-md border border-zinc-200 bg-white p-4">
-          <label htmlFor="lyrics-input" className="mb-2 block text-sm font-medium text-zinc-800">
-            Lyrics Input
-          </label>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <label htmlFor="lyrics-input" className="block text-sm font-medium text-zinc-800">
+              Lyrics Input
+            </label>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={newLinkLabel}
+                onChange={(event) => setNewLinkLabel(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleInsertLinkMarker();
+                  }
+                }}
+                placeholder="Link label"
+                className="h-8 w-36 rounded-md border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-zinc-500"
+              />
+              <button
+                type="button"
+                onClick={handleInsertLinkMarker}
+                className="h-8 rounded-md border border-zinc-300 bg-white px-2.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100"
+              >
+                Insert [[Link]]
+              </button>
+            </div>
+          </div>
           <textarea
+            ref={lyricsInputRef}
             id="lyrics-input"
             value={input}
             onChange={(event) => setInput(event.target.value)}
@@ -333,7 +822,8 @@ Rules:
 # Song Info
 / line break
 // new slide
-/* Verse 1 */ section comment"
+/* Verse 1 */ section comment
+[[Chorus]] jump link marker"
           />
         </section>
 
@@ -411,6 +901,7 @@ Rules:
           <li>/ = line break inside current slide</li>
           <li>// = new slide</li>
           <li>/* Verse 1 */ or &lt;!-- Bridge --&gt; = section comments (not rendered)</li>
+          <li>[[Chorus]] = presenter jump link marker (not rendered on slide)</li>
           <li>Nothing between // delimiters = pure black blank slide</li>
         </ul>
         <textarea
@@ -420,6 +911,126 @@ Rules:
         />
         {guideMessage && <p className="mt-2 text-xs text-zinc-500">{guideMessage}</p>}
       </section>
+
+      {presentationMode !== "none" && currentSlide && (
+        <div className="fixed inset-0 z-50 bg-black text-white">
+          {presentationMode === "fullscreen" && (
+            <div className="flex h-full items-center justify-center p-4">
+              <div className="h-full w-full">
+                <PresentationSlide
+                  slide={currentSlide}
+                  fontFamily={fontFamily}
+                  lyricsFontSize={lyricsFontSize}
+                  metaFontSize={metaFontSize}
+                  lyricsLineHeight={lyricsLineHeight}
+                />
+              </div>
+            </div>
+          )}
+
+          {presentationMode === "presenter" && (
+            <div ref={presenterLayoutRef} className="flex h-full min-h-0 w-full p-3" style={{ gap: "10px" }}>
+              <section ref={presenterLeftPaneRef} className="flex min-h-0 flex-col" style={{ width: `${presenterLeftWidth}%` }}>
+                <div className="flex min-h-0 items-center justify-center rounded-md border border-zinc-800 bg-black p-3" style={{ height: `${presenterTopHeight}%` }}>
+                  <PresentationSlide
+                    slide={currentSlide}
+                    fontFamily={fontFamily}
+                    lyricsFontSize={lyricsFontSize}
+                    metaFontSize={metaFontSize}
+                    lyricsLineHeight={lyricsLineHeight}
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onMouseDown={startLeftDividerDrag}
+                  className="my-1 h-2 cursor-row-resize rounded bg-zinc-700/80 hover:bg-zinc-500"
+                  aria-label="Resize current slide and links panel"
+                />
+
+                <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950 p-2">
+                  <p className="mb-2 text-xs text-zinc-400">Jump Links (grouped by song)</p>
+                  <div className="space-y-3">
+                    {linkGroups.map((group) => (
+                      <div key={`links-${group.song}`}>
+                        <p className="mb-1 text-[11px] text-zinc-500">{group.song}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {group.links.length > 0 ? (
+                            group.links.map((link) => (
+                              <button
+                                key={`${group.song}-${link.label}`}
+                                type="button"
+                                onClick={() => setCurrentSlideIndex(link.slideIndex)}
+                                className={`rounded-md border px-2 py-1 text-[11px] transition ${
+                                  currentSongName === group.song && activeLinkBySong.get(group.song) === link.label
+                                    ? "border-zinc-300 bg-zinc-200 text-zinc-900"
+                                    : "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
+                                }`}
+                              >
+                                {link.label}
+                              </button>
+                            ))
+                          ) : (
+                            <span className="text-[11px] text-zinc-600">No link markers</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              <button
+                type="button"
+                onMouseDown={startMainDividerDrag}
+                className="h-full w-2 cursor-col-resize rounded bg-zinc-700/80 hover:bg-zinc-500"
+                aria-label="Resize presenter columns"
+              />
+
+              <aside className="min-h-0 flex-1 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950 p-2">
+                <p className="mb-2 text-xs text-zinc-400">All Slides (click to jump)</p>
+                <div
+                  className="grid gap-2"
+                  style={{ gridTemplateColumns: `repeat(${presenterThumbColumns}, minmax(0, 1fr))` }}
+                >
+                  {slides.map((slide, index) => (
+                    <button
+                      key={`presenter-thumb-${slide.id}`}
+                      type="button"
+                      onClick={() => setCurrentSlideIndex(index)}
+                      className={`w-full rounded-md border p-1 text-left transition ${
+                        index === currentSlideIndex
+                          ? "border-zinc-300 bg-zinc-800"
+                          : "border-zinc-700 bg-zinc-900 hover:bg-zinc-800"
+                      }`}
+                    >
+                      <div className="mb-1 text-[10px] text-zinc-400">Slide {index + 1}</div>
+                      <article className="relative flex aspect-video w-full items-center justify-center bg-black" style={{ fontFamily }}>
+                        {!slide.isBlank && (
+                          <p
+                            className="w-[88%] whitespace-pre-line text-center font-bold text-white"
+                            style={{ fontSize: `${Math.max(lyricsFontSize * 0.18, 8)}px`, lineHeight: lyricsLineHeight }}
+                          >
+                            {slide.lyricText}
+                          </p>
+                        )}
+                        {slide.meta && !slide.isBlank && (
+                          <p
+                            className="absolute bottom-[5.5%] left-1/2 w-[92%] -translate-x-1/2 text-center font-normal text-white"
+                            style={{ fontSize: `${Math.max(metaFontSize * 0.2, 7)}px` }}
+                          >
+                            {slide.meta}
+                          </p>
+                        )}
+                      </article>
+                    </button>
+                  ))}
+                </div>
+              </aside>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
