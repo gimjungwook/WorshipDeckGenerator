@@ -2,18 +2,22 @@ import { useEffect, useMemo, useState } from "react";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 
-const DEFAULT_INPUT = `# Amazing Grace - John Newton
-Amazing grace how sweet the sound / that saved a wretch like me
-I once was lost but now am found / was blind but now I see
-//
-Twas grace that taught my heart to fear / and grace my fears relieved
-How precious did that grace appear / the hour I first believed
+const DEFAULT_INPUT = `# Example Song - Example Artist
+/* Intro */
+Opening instrumental
 //
 
 //
-# Holy Forever - Chris Tomlin
-A thousand generations / falling down in worship
-To sing the song of ages / to the Lamb`;
+/* Verse 1 */
+Line one of the verse / line two of the verse
+Line three of the verse
+//
+<!-- Chorus -->
+Chorus line one / chorus line two / chorus line three
+//
+# Second Song - Another Artist
+/* Bridge */
+Bridge line one / bridge line two`;
 
 const LLM_PREP_PROMPT = `Convert the song lyrics below into Worship Deck Generator format.
 
@@ -55,10 +59,10 @@ const STORAGE_KEYS = {
 };
 
 const DEFAULT_SETTINGS = {
-  lyricsFontSize: 62,
-  metaFontSize: 22,
+  lyricsFontSize: 24,
+  metaFontSize: 16,
   fontFamily: "Arial, sans-serif",
-  lyricsLineHeight: 1.16
+  lyricsLineHeight: 1.6
 };
 
 function parseSlides(rawText) {
