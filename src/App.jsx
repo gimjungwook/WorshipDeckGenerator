@@ -47,6 +47,7 @@ const FONT_OPTIONS = [
 ];
 
 const STORAGE_KEYS = {
+  lyricsInput: "worshipDeck.lyricsInput",
   lyricsFontSize: "worshipDeck.lyricsFontSize",
   metaFontSize: "worshipDeck.metaFontSize",
   fontFamily: "worshipDeck.fontFamily",
@@ -95,7 +96,7 @@ function parseSlides(rawText) {
 }
 
 export default function App() {
-  const [input, setInput] = useState(DEFAULT_INPUT);
+  const [input, setInput] = useState(() => localStorage.getItem(STORAGE_KEYS.lyricsInput) || DEFAULT_INPUT);
   const [isExporting, setIsExporting] = useState(false);
   const [copyingSlideId, setCopyingSlideId] = useState(null);
   const [copyMessage, setCopyMessage] = useState("");
@@ -122,6 +123,10 @@ export default function App() {
   });
 
   const slides = useMemo(() => parseSlides(input), [input]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.lyricsInput, input);
+  }, [input]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.lyricsFontSize, String(lyricsFontSize));
