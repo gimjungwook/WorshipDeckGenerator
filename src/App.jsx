@@ -288,6 +288,8 @@ export default function App() {
   const [shareMessage, setShareMessage] = useState("");
   const [newLinkLabel, setNewLinkLabel] = useState("");
   const [newImageUrl, setNewImageUrl] = useState("");
+  const [imageInsertTarget, setImageInsertTarget] = useState("end");
+  const [uploadedImageSlides, setUploadedImageSlides] = useState([]);
   const [theme, setTheme] = useState(() => {
     const storedTheme = localStorage.getItem(STORAGE_KEYS.theme);
     return storedTheme === "dark" ? "dark" : "light";
@@ -302,6 +304,7 @@ export default function App() {
   const audienceWindowRef = useRef(null);
   const lyricsInputRef = useRef(null);
   const imageFileInputRef = useRef(null);
+  const pendingUploadTargetRef = useRef("end");
   const presenterLayoutRef = useRef(null);
   const presenterLeftPaneRef = useRef(null);
   const [audienceState, setAudienceState] = useState({
@@ -333,7 +336,13 @@ export default function App() {
       : DEFAULT_SETTINGS.lyricsLineHeight;
   });
 
-  const slides = useMemo(() => parseSlides(input), [input]);
+  const parsedSlides = useMemo(() => parseSlides(input), [input]);
+
+  const slides = useMemo(() => {
+    const startSlides = uploadedImageSlides.filter((slide) => slide.insertAt === "start");
+    const endSlides = uploadedImageSlides.filter((slide) => slide.insertAt === "end");
+    return [...startSlides, ...parsedSlides, ...endSlides];
+  }, [parsedSlides, uploadedImageSlides]);
 
   const currentSlide = slides[currentSlideIndex] || slides[0];
   const isDark = theme === "dark";
@@ -345,6 +354,10 @@ export default function App() {
     const groupByMeta = new Map();
 
     slides.forEach((slide, index) => {
+      if (!slide.linkTargets || slide.linkTargets.length === 0) {
+        return;
+      }
+
       const groupName = slide.meta || "Unlabeled Song";
       if (!groupByMeta.has(groupName)) {
         const group = { song: groupName, links: [] };
@@ -774,33 +787,38 @@ export default function App() {
     });
   };
 
-  const handleInsertImageSlide = () => {
-    const imageUrl = newImageUrl.trim();
-    if (!imageUrl || !lyricsInputRef.current) {
+  const addExternalImageSlide = (imageUrl, insertAt) => {
+    if (!imageUrl) {
       return;
     }
 
-    const textarea = lyricsInputRef.current;
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const blockPrefix = start > 0 && input[start - 1] !== "\n" ? "\n" : "";
-    const blockSuffix = input.slice(end).startsWith("\n") ? "" : "\n";
-    const imageBlock = `${blockPrefix}![](${imageUrl})\n//${blockSuffix}`;
-    const nextValue = `${input.slice(0, start)}${imageBlock}${input.slice(end)}`;
+    setUploadedImageSlides((prev) => [
+      ...prev,
+      {
+        id: `uploaded-image-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        lyricText: "",
+        meta: "",
+        linkTargets: [],
+        imageUrl,
+        insertAt,
+        isBlank: false
+      }
+    ]);
+  };
 
-    setInput(nextValue);
+  const handleInsertImageSlide = () => {
+    const imageUrl = newImageUrl.trim();
+    if (!imageUrl) {
+      return;
+    }
+
+    addExternalImageSlide(imageUrl, imageInsertTarget);
     setNewImageUrl("");
-
-    window.requestAnimationFrame(() => {
-      const cursor = start + imageBlock.length;
-      textarea.focus();
-      textarea.setSelectionRange(cursor, cursor);
-    });
   };
 
   const handleUploadImageFile = (event) => {
     const file = event.target.files?.[0];
-    if (!file || !lyricsInputRef.current) {
+    if (!file) {
       return;
     }
 
@@ -811,21 +829,7 @@ export default function App() {
         return;
       }
 
-      const textarea = lyricsInputRef.current;
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const blockPrefix = start > 0 && input[start - 1] !== "\n" ? "\n" : "";
-      const blockSuffix = input.slice(end).startsWith("\n") ? "" : "\n";
-      const imageBlock = `${blockPrefix}![](${result})\n//${blockSuffix}`;
-      const nextValue = `${input.slice(0, start)}${imageBlock}${input.slice(end)}`;
-
-      setInput(nextValue);
-
-      window.requestAnimationFrame(() => {
-        const cursor = start + imageBlock.length;
-        textarea.focus();
-        textarea.setSelectionRange(cursor, cursor);
-      });
+      addExternalImageSlide(result, pendingUploadTargetRef.current || imageInsertTarget);
     };
 
     reader.readAsDataURL(file);
@@ -1124,6 +1128,16 @@ export default function App() {
                   isDark ? "border-zinc-700 bg-zinc-950 text-zinc-100" : "border-zinc-300 bg-white text-zinc-800"
                 }`}
               />
+              <select
+                value={imageInsertTarget}
+                onChange={(event) => setImageInsertTarget(event.target.value)}
+                className={`h-8 rounded-md border px-2 text-xs outline-none focus:border-zinc-500 ${
+                  isDark ? "border-zinc-700 bg-zinc-950 text-zinc-100" : "border-zinc-300 bg-white text-zinc-800"
+                }`}
+              >
+                <option value="start">At Start</option>
+                <option value="end">At End</option>
+              </select>
               <button
                 type="button"
                 onClick={handleInsertImageSlide}
@@ -1137,7 +1151,10 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => imageFileInputRef.current?.click()}
+                onClick={() => {
+                  pendingUploadTargetRef.current = imageInsertTarget;
+                  imageFileInputRef.current?.click();
+                }}
                 className={`h-8 rounded-md border px-2.5 text-xs font-medium transition ${
                   isDark
                     ? "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
@@ -1156,6 +1173,11 @@ export default function App() {
             </div>
           </div>
           {shareMessage && <p className={`mb-2 text-xs ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>{shareMessage}</p>}
+          {uploadedImageSlides.length > 0 && (
+            <p className={`mb-2 text-xs ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>
+              Uploaded image slides: {uploadedImageSlides.length} (managed outside lyrics text)
+            </p>
+          )}
           <textarea
             ref={lyricsInputRef}
             id="lyrics-input"
