@@ -32,25 +32,26 @@ Output rules:
 3) Use a double slash (//) to start a new slide.
 4) Keep each slide readable (normally 2-3 lines per slide).
 5) If a lyrical repetition needs to stay together, allow up to 4 lines on that slide maximum.
-6) If there should be a musical interlude, put an empty slide using only // with nothing between delimiters.
-7) Add section markers as standalone comment lines using C-style comments, for example:
+6) Never create a one-line slide. Every non-blank lyric slide must contain at least 2 lines.
+7) If there should be a musical interlude, put an empty slide using only // with nothing between delimiters.
+8) Add section markers as standalone comment lines using C-style comments, for example:
 /* Intro */
 /* Verse 1 */
 /* Chorus */
 /* Bridge */
-8) Also place jump-link markers with double brackets before major sections, for example:
+9) Also place jump-link markers with double brackets before major sections, for example:
 [[Intro]]
 [[Verse 1]]
 [[Chorus]]
 [[Bridge]]
-9) Do not accidentally repeat lyrics. Analyze the full song structure first, then output each lyric part once per intended occurrence.
-10) Only keep repeated parts when the original song intentionally repeats them in sequence.
-11) Never add divider/separator lines such as --- , ___ , === , or similar decorative lines.
-12) Return the final formatted result inside a markdown code block with plaintext language tag. Use this exact wrapper:
+10) Do not accidentally repeat lyrics. Analyze the full song structure first, then output each lyric part once per intended occurrence.
+11) Only keep repeated parts when the original song intentionally repeats them in sequence.
+12) Never add divider/separator lines such as --- , ___ , === , or similar decorative lines.
+13) Return the final formatted result inside a markdown code block with plaintext language tag. Use this exact wrapper:
 \`\`\`plaintext
 [formatted lyrics here]
 \`\`\`
-13) Do not add any explanation text outside the code block.
+14) Do not add any explanation text outside the code block.
 
 Lyrics to format:
 [PASTE RAW LYRICS HERE]`;
@@ -295,6 +296,7 @@ export default function App() {
     return storedTheme === "dark" ? "dark" : "light";
   });
   const [presenterTypographyOpen, setPresenterTypographyOpen] = useState(true);
+  const [presenterLyricsEditorOpen, setPresenterLyricsEditorOpen] = useState(false);
   const [presenterNavigatorTextSize, setPresenterNavigatorTextSize] = useState(11);
   const [mobileSection, setMobileSection] = useState("lyrics");
   const [presentationMode, setPresentationMode] = useState("none");
@@ -586,6 +588,15 @@ export default function App() {
     }
 
     const onKeyDown = (event) => {
+      const target = event.target;
+      const isTypingTarget =
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
+
+      if (isTypingTarget) {
+        return;
+      }
+
       if (["ArrowRight", "PageDown", " ", "Enter"].includes(event.key)) {
         event.preventDefault();
         setCurrentSlideIndex((prev) => Math.min(prev + 1, slides.length - 1));
@@ -1411,6 +1422,28 @@ Rules:
                             className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-700"
                           />
                         </label>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mb-3 rounded-md border border-zinc-800 bg-zinc-900 p-2">
+                    <button
+                      type="button"
+                      onClick={() => setPresenterLyricsEditorOpen((prev) => !prev)}
+                      className="flex w-full items-center justify-between text-left text-xs text-zinc-300"
+                    >
+                      <span>Live Lyrics Editor</span>
+                      <span className="text-zinc-500">{presenterLyricsEditorOpen ? "Hide" : "Show"}</span>
+                    </button>
+
+                    {presenterLyricsEditorOpen && (
+                      <div className="mt-2">
+                        <p className="mb-1 text-[11px] text-zinc-500">Edit lyrics during presenter mode (applies instantly)</p>
+                        <textarea
+                          value={input}
+                          onChange={(event) => setInput(event.target.value)}
+                          className="h-40 w-full resize-y rounded-md border border-zinc-700 bg-zinc-950 p-2 font-mono text-xs leading-relaxed text-zinc-100 outline-none focus:border-zinc-500"
+                        />
                       </div>
                     )}
                   </div>
