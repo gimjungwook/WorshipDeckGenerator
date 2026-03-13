@@ -157,7 +157,15 @@ function PresentationSlide({ slide, fontFamily, lyricsFontSize, metaFontSize, ly
           fontFamily
         }}
       >
-        {!slide?.isBlank && (
+        {slide?.imageUrl && (
+          <img
+            src={slide.imageUrl}
+            alt="Slide visual"
+            crossOrigin="anonymous"
+            className="absolute inset-0 h-full w-full object-contain"
+          />
+        )}
+        {!slide?.isBlank && !slide?.imageUrl && (
           <p
             className="absolute left-1/2 top-1/2 w-[88%] -translate-x-1/2 -translate-y-1/2 whitespace-pre-line text-center font-bold text-white"
             style={{ fontSize: `${lyricsFontSize}px`, lineHeight: lyricsLineHeight }}
@@ -190,10 +198,25 @@ function parseSlides(rawText) {
     return /^[-_=]{3,}$/.test(line.replace(/\s/g, ""));
   };
 
+  const parseImageDirective = (line) => {
+    const markdownMatch = line.match(/^!\[[^\]]*\]\((.+)\)$/);
+    if (markdownMatch) {
+      return markdownMatch[1].trim();
+    }
+
+    const shortMatch = line.match(/^@image\s+(.+)$/i);
+    if (shortMatch) {
+      return shortMatch[1].trim();
+    }
+
+    return "";
+  };
+
   return segments.map((segment, index) => {
     const lines = segment.split(/\r?\n/);
     const lyricLines = [];
     const linkTargets = [];
+    let imageUrl = "";
 
     lines.forEach((line) => {
       const trimmed = line.trim();
@@ -204,6 +227,12 @@ function parseSlides(rawText) {
       } else if (isDividerLine(trimmed)) {
         return;
       } else {
+        const parsedImageUrl = parseImageDirective(trimmed);
+        if (parsedImageUrl) {
+          imageUrl = parsedImageUrl;
+          return;
+        }
+
         const lineLinkMatches = [...line.matchAll(/\[\[([^\]]+)\]\]/g)]
           .map((match) => match[1].trim())
           .filter(Boolean);
@@ -227,7 +256,8 @@ function parseSlides(rawText) {
       lyricText,
       meta: currentMeta,
       linkTargets,
-      isBlank: lyricText.length === 0
+      imageUrl,
+      isBlank: lyricText.length === 0 && !imageUrl
     };
   });
 }
@@ -257,6 +287,7 @@ export default function App() {
   const [presentationMessage, setPresentationMessage] = useState("");
   const [shareMessage, setShareMessage] = useState("");
   const [newLinkLabel, setNewLinkLabel] = useState("");
+  const [newImageUrl, setNewImageUrl] = useState("");
   const [theme, setTheme] = useState(() => {
     const storedTheme = localStorage.getItem(STORAGE_KEYS.theme);
     return storedTheme === "dark" ? "dark" : "light";
@@ -270,6 +301,7 @@ export default function App() {
   const [presenterTopHeight, setPresenterTopHeight] = useState(62);
   const audienceWindowRef = useRef(null);
   const lyricsInputRef = useRef(null);
+  const imageFileInputRef = useRef(null);
   const presenterLayoutRef = useRef(null);
   const presenterLeftPaneRef = useRef(null);
   const [audienceState, setAudienceState] = useState({
@@ -356,13 +388,15 @@ export default function App() {
       song: group.song,
       sections: group.links.map((link) => {
         const slide = slides[link.slideIndex];
-        const preview = slide?.lyricText
-          ? slide.lyricText
-              .split("\n")
-              .filter((line) => line.trim().length > 0)
-              .slice(0, 2)
-              .join(" / ")
-          : "(blank section)";
+        const preview = slide?.imageUrl
+          ? "(image slide)"
+          : slide?.lyricText
+            ? slide.lyricText
+                .split("\n")
+                .filter((line) => line.trim().length > 0)
+                .slice(0, 2)
+                .join(" / ")
+            : "(blank section)";
 
         return {
           id: link.id,
@@ -740,6 +774,64 @@ export default function App() {
     });
   };
 
+  const handleInsertImageSlide = () => {
+    const imageUrl = newImageUrl.trim();
+    if (!imageUrl || !lyricsInputRef.current) {
+      return;
+    }
+
+    const textarea = lyricsInputRef.current;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const blockPrefix = start > 0 && input[start - 1] !== "\n" ? "\n" : "";
+    const blockSuffix = input.slice(end).startsWith("\n") ? "" : "\n";
+    const imageBlock = `${blockPrefix}![](${imageUrl})\n//${blockSuffix}`;
+    const nextValue = `${input.slice(0, start)}${imageBlock}${input.slice(end)}`;
+
+    setInput(nextValue);
+    setNewImageUrl("");
+
+    window.requestAnimationFrame(() => {
+      const cursor = start + imageBlock.length;
+      textarea.focus();
+      textarea.setSelectionRange(cursor, cursor);
+    });
+  };
+
+  const handleUploadImageFile = (event) => {
+    const file = event.target.files?.[0];
+    if (!file || !lyricsInputRef.current) {
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (!result) {
+        return;
+      }
+
+      const textarea = lyricsInputRef.current;
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const blockPrefix = start > 0 && input[start - 1] !== "\n" ? "\n" : "";
+      const blockSuffix = input.slice(end).startsWith("\n") ? "" : "\n";
+      const imageBlock = `${blockPrefix}![](${result})\n//${blockSuffix}`;
+      const nextValue = `${input.slice(0, start)}${imageBlock}${input.slice(end)}`;
+
+      setInput(nextValue);
+
+      window.requestAnimationFrame(() => {
+        const cursor = start + imageBlock.length;
+        textarea.focus();
+        textarea.setSelectionRange(cursor, cursor);
+      });
+    };
+
+    reader.readAsDataURL(file);
+    event.target.value = "";
+  };
+
   const handleCopyShareUrl = async () => {
     if (!navigator.clipboard) {
       setShareMessage("Clipboard is not available in this browser.");
@@ -978,7 +1070,7 @@ export default function App() {
             <label htmlFor="lyrics-input" className={`block text-sm font-medium ${isDark ? "text-zinc-100" : "text-zinc-800"}`}>
               Lyrics Input
             </label>
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center justify-end gap-1.5">
               <input
                 type="text"
                 value={newLinkLabel}
@@ -1016,6 +1108,51 @@ export default function App() {
               >
                 Copy Share URL
               </button>
+
+              <input
+                type="url"
+                value={newImageUrl}
+                onChange={(event) => setNewImageUrl(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleInsertImageSlide();
+                  }
+                }}
+                placeholder="Image URL"
+                className={`h-8 w-44 rounded-md border px-2 text-xs outline-none focus:border-zinc-500 ${
+                  isDark ? "border-zinc-700 bg-zinc-950 text-zinc-100" : "border-zinc-300 bg-white text-zinc-800"
+                }`}
+              />
+              <button
+                type="button"
+                onClick={handleInsertImageSlide}
+                className={`h-8 rounded-md border px-2.5 text-xs font-medium transition ${
+                  isDark
+                    ? "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
+                    : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"
+                }`}
+              >
+                Insert Image Slide
+              </button>
+              <button
+                type="button"
+                onClick={() => imageFileInputRef.current?.click()}
+                className={`h-8 rounded-md border px-2.5 text-xs font-medium transition ${
+                  isDark
+                    ? "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
+                    : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"
+                }`}
+              >
+                Upload Image
+              </button>
+              <input
+                ref={imageFileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleUploadImageFile}
+                className="hidden"
+              />
             </div>
           </div>
           {shareMessage && <p className={`mb-2 text-xs ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>{shareMessage}</p>}
@@ -1034,7 +1171,8 @@ Rules:
 / line break
 // new slide
 /* Verse 1 */ section comment
-[[Chorus]] jump link marker"
+[[Chorus]] jump link marker
+![](https://image-url) image slide"
           />
         </section>
 
@@ -1070,7 +1208,16 @@ Rules:
                     fontFamily
                   }}
                 >
-                  {!slide.isBlank && (
+                  {slide.imageUrl && (
+                    <img
+                      src={slide.imageUrl}
+                      alt="Slide visual"
+                      crossOrigin="anonymous"
+                      className="absolute inset-0 h-full w-full object-contain"
+                    />
+                  )}
+
+                  {!slide.isBlank && !slide.imageUrl && (
                     <p
                       className="w-[88%] whitespace-pre-line text-center font-bold text-white"
                       style={{ fontSize: `${lyricsFontSize}px`, lineHeight: lyricsLineHeight }}
@@ -1129,6 +1276,7 @@ Rules:
           <li>// = new slide</li>
           <li>/* Verse 1 */ or &lt;!-- Bridge --&gt; = section comments (not rendered)</li>
           <li>[[Chorus]] = presenter jump link marker (not rendered on slide)</li>
+          <li>![](https://image-url) or @image https://image-url = image slide</li>
           <li>Nothing between // delimiters = pure black blank slide</li>
         </ul>
         <textarea
