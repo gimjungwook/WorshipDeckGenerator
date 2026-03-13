@@ -69,7 +69,8 @@ const STORAGE_KEYS = {
   lyricsFontSize: "worshipDeck.lyricsFontSize",
   metaFontSize: "worshipDeck.metaFontSize",
   fontFamily: "worshipDeck.fontFamily",
-  lyricsLineHeight: "worshipDeck.lyricsLineHeight"
+  lyricsLineHeight: "worshipDeck.lyricsLineHeight",
+  theme: "worshipDeck.theme"
 };
 
 const DEFAULT_SETTINGS = {
@@ -256,6 +257,10 @@ export default function App() {
   const [presentationMessage, setPresentationMessage] = useState("");
   const [shareMessage, setShareMessage] = useState("");
   const [newLinkLabel, setNewLinkLabel] = useState("");
+  const [theme, setTheme] = useState(() => {
+    const storedTheme = localStorage.getItem(STORAGE_KEYS.theme);
+    return storedTheme === "dark" ? "dark" : "light";
+  });
   const [presenterTypographyOpen, setPresenterTypographyOpen] = useState(true);
   const [presenterNavigatorTextSize, setPresenterNavigatorTextSize] = useState(11);
   const [mobileSection, setMobileSection] = useState("lyrics");
@@ -299,6 +304,7 @@ export default function App() {
   const slides = useMemo(() => parseSlides(input), [input]);
 
   const currentSlide = slides[currentSlideIndex] || slides[0];
+  const isDark = theme === "dark";
   const currentSongName = currentSlide?.meta || "Unlabeled Song";
   const presenterThumbColumns = presenterLeftWidth <= 50 ? 2 : 1;
 
@@ -408,6 +414,10 @@ export default function App() {
   }, [lyricsLineHeight]);
 
   useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.theme, theme);
+  }, [theme]);
+
+  useEffect(() => {
     if (!isAudienceWindow || typeof BroadcastChannel === "undefined") {
       return;
     }
@@ -430,6 +440,33 @@ export default function App() {
 
     channel.postMessage({ type: "audience-ready" });
     return () => channel.close();
+  }, [isAudienceWindow]);
+
+  useEffect(() => {
+    if (!isAudienceWindow) {
+      return;
+    }
+
+    const onAudienceKeyDown = async (event) => {
+      if (event.key !== " " && event.code !== "Space") {
+        return;
+      }
+
+      event.preventDefault();
+
+      if (document.fullscreenElement || !document.documentElement.requestFullscreen) {
+        return;
+      }
+
+      try {
+        await document.documentElement.requestFullscreen();
+      } catch {
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", onAudienceKeyDown);
+    return () => window.removeEventListener("keydown", onAudienceKeyDown);
   }, [isAudienceWindow]);
 
   useEffect(() => {
@@ -796,29 +833,48 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-100 p-4 pb-20 text-zinc-900 md:p-6 md:pb-6">
+    <div className={`min-h-screen p-4 pb-20 md:p-6 md:pb-6 ${isDark ? "bg-zinc-950 text-zinc-100" : "bg-zinc-100 text-zinc-900"}`}>
       <header className="mx-auto mb-4 flex w-full max-w-[1700px] flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Worship Deck Generator</h1>
-          <p className="text-sm text-zinc-600">
+          <p className={`text-sm ${isDark ? "text-zinc-400" : "text-zinc-600"}`}>
             Paste lyrics, preview slides live, and export a PDF deck.
           </p>
-          {copyMessage && <p className="mt-1 text-xs text-zinc-500">{copyMessage}</p>}
-          {presentationMessage && <p className="mt-1 text-xs text-zinc-500">{presentationMessage}</p>}
+          {copyMessage && <p className={`mt-1 text-xs ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>{copyMessage}</p>}
+          {presentationMessage && <p className={`mt-1 text-xs ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>{presentationMessage}</p>}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+            className={`h-10 rounded-md border px-4 text-sm font-medium transition ${
+              isDark
+                ? "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
+                : "border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-100"
+            }`}
+          >
+            {isDark ? "Light Theme" : "Dark Theme"}
+          </button>
           <button
             type="button"
             onClick={() => handleStartPresentation("fullscreen")}
-            className="h-10 rounded-md border border-zinc-300 bg-white px-5 text-sm font-medium text-zinc-800 transition hover:bg-zinc-100"
+            className={`h-10 rounded-md border px-5 text-sm font-medium transition ${
+              isDark
+                ? "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
+                : "border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-100"
+            }`}
           >
             Start Fullscreen
           </button>
           <button
             type="button"
             onClick={() => handleStartPresentation("presenter")}
-            className="h-10 rounded-md border border-zinc-300 bg-white px-5 text-sm font-medium text-zinc-800 transition hover:bg-zinc-100"
+            className={`h-10 rounded-md border px-5 text-sm font-medium transition ${
+              isDark
+                ? "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
+                : "border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-100"
+            }`}
           >
             Start Presenter
           </button>
@@ -833,39 +889,43 @@ export default function App() {
         </div>
       </header>
 
-      <div className="mx-auto mb-4 w-full max-w-[1700px] rounded-md border border-zinc-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-medium text-zinc-800">Slide Settings</h2>
-        <div className="grid gap-3 md:grid-cols-4">
+      <div className={`mx-auto mb-4 w-full max-w-[1700px] rounded-md border p-4 ${isDark ? "border-zinc-800 bg-zinc-900" : "border-zinc-200 bg-white"}`}>
+        <h2 className={`mb-3 text-sm font-medium ${isDark ? "text-zinc-100" : "text-zinc-800"}`}>Slide Settings</h2>
+        <div className="grid gap-3 md:grid-cols-5">
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-zinc-600">Lyrics Font Size ({lyricsFontSize}px)</span>
+            <span className={`mb-1 block text-xs font-medium ${isDark ? "text-zinc-400" : "text-zinc-600"}`}>Lyrics Font Size ({lyricsFontSize}px)</span>
             <input
               type="range"
               min="24"
               max="120"
               value={lyricsFontSize}
               onChange={(event) => setLyricsFontSize(Number(event.target.value))}
-              className="h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-200"
+              className={`h-2 w-full cursor-pointer appearance-none rounded-full ${isDark ? "bg-zinc-700" : "bg-zinc-200"}`}
             />
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-zinc-600">Metadata Font Size ({metaFontSize}px)</span>
+            <span className={`mb-1 block text-xs font-medium ${isDark ? "text-zinc-400" : "text-zinc-600"}`}>Metadata Font Size ({metaFontSize}px)</span>
             <input
               type="range"
               min="12"
               max="42"
               value={metaFontSize}
               onChange={(event) => setMetaFontSize(Number(event.target.value))}
-              className="h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-200"
+              className={`h-2 w-full cursor-pointer appearance-none rounded-full ${isDark ? "bg-zinc-700" : "bg-zinc-200"}`}
             />
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-zinc-600">Font Style</span>
+            <span className={`mb-1 block text-xs font-medium ${isDark ? "text-zinc-400" : "text-zinc-600"}`}>Font Style</span>
             <select
               value={fontFamily}
               onChange={(event) => setFontFamily(event.target.value)}
-              className="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-900 outline-none ring-0 transition focus:border-zinc-500"
+              className={`h-10 w-full rounded-md border px-3 text-sm outline-none ring-0 transition ${
+                isDark
+                  ? "border-zinc-700 bg-zinc-950 text-zinc-100 focus:border-zinc-500"
+                  : "border-zinc-300 bg-white text-zinc-900 focus:border-zinc-500"
+              }`}
             >
               {FONT_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -876,7 +936,7 @@ export default function App() {
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-zinc-600">
+            <span className={`mb-1 block text-xs font-medium ${isDark ? "text-zinc-400" : "text-zinc-600"}`}>
               Line Spacing ({lyricsLineHeight.toFixed(2)})
             </span>
             <input
@@ -886,16 +946,36 @@ export default function App() {
               step="0.02"
               value={lyricsLineHeight}
               onChange={(event) => setLyricsLineHeight(Number(event.target.value))}
-              className="h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-200"
+              className={`h-2 w-full cursor-pointer appearance-none rounded-full ${isDark ? "bg-zinc-700" : "bg-zinc-200"}`}
             />
+          </label>
+
+          <label className="block">
+            <span className={`mb-1 block text-xs font-medium ${isDark ? "text-zinc-400" : "text-zinc-600"}`}>Theme</span>
+            <select
+              value={theme}
+              onChange={(event) => setTheme(event.target.value)}
+              className={`h-10 w-full rounded-md border px-3 text-sm outline-none ring-0 transition ${
+                isDark
+                  ? "border-zinc-700 bg-zinc-950 text-zinc-100 focus:border-zinc-500"
+                  : "border-zinc-300 bg-white text-zinc-900 focus:border-zinc-500"
+              }`}
+            >
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
           </label>
         </div>
       </div>
 
       <main className="mx-auto grid w-full max-w-[1700px] gap-4 lg:grid-cols-2">
-        <section className={`rounded-md border border-zinc-200 bg-white p-4 ${mobileSection !== "lyrics" ? "hidden md:block" : "block"}`}>
+        <section
+          className={`rounded-md border p-4 ${isDark ? "border-zinc-800 bg-zinc-900" : "border-zinc-200 bg-white"} ${
+            mobileSection !== "lyrics" ? "hidden md:block" : "block"
+          }`}
+        >
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <label htmlFor="lyrics-input" className="block text-sm font-medium text-zinc-800">
+            <label htmlFor="lyrics-input" className={`block text-sm font-medium ${isDark ? "text-zinc-100" : "text-zinc-800"}`}>
               Lyrics Input
             </label>
             <div className="flex items-center gap-1.5">
@@ -910,31 +990,43 @@ export default function App() {
                   }
                 }}
                 placeholder="Link label"
-                className="h-8 w-36 rounded-md border border-zinc-300 bg-white px-2 text-xs text-zinc-800 outline-none focus:border-zinc-500"
+                className={`h-8 w-36 rounded-md border px-2 text-xs outline-none focus:border-zinc-500 ${
+                  isDark ? "border-zinc-700 bg-zinc-950 text-zinc-100" : "border-zinc-300 bg-white text-zinc-800"
+                }`}
               />
               <button
                 type="button"
                 onClick={handleInsertLinkMarker}
-                className="h-8 rounded-md border border-zinc-300 bg-white px-2.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100"
+                className={`h-8 rounded-md border px-2.5 text-xs font-medium transition ${
+                  isDark
+                    ? "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
+                    : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"
+                }`}
               >
                 Insert [[Link]]
               </button>
               <button
                 type="button"
                 onClick={handleCopyShareUrl}
-                className="h-8 rounded-md border border-zinc-300 bg-white px-2.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100"
+                className={`h-8 rounded-md border px-2.5 text-xs font-medium transition ${
+                  isDark
+                    ? "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
+                    : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"
+                }`}
               >
                 Copy Share URL
               </button>
             </div>
           </div>
-          {shareMessage && <p className="mb-2 text-xs text-zinc-500">{shareMessage}</p>}
+          {shareMessage && <p className={`mb-2 text-xs ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>{shareMessage}</p>}
           <textarea
             ref={lyricsInputRef}
             id="lyrics-input"
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            className="h-[70vh] w-full resize-none rounded-md border border-zinc-200 bg-zinc-50 p-4 font-mono text-sm leading-relaxed text-zinc-800 outline-none transition focus:border-zinc-400"
+            className={`h-[70vh] w-full resize-none rounded-md border p-4 font-mono text-sm leading-relaxed outline-none transition focus:border-zinc-400 ${
+              isDark ? "border-zinc-700 bg-zinc-950 text-zinc-100" : "border-zinc-200 bg-zinc-50 text-zinc-800"
+            }`}
             placeholder="Type lyrics and symbols here...
 
 Rules:
@@ -946,18 +1038,26 @@ Rules:
           />
         </section>
 
-        <section className={`rounded-md border border-zinc-200 bg-white p-4 ${mobileSection !== "slides" ? "hidden md:block" : "block"}`}>
-          <h2 className="mb-2 text-sm font-medium text-zinc-800">Slide Preview (16:9)</h2>
-          <div className="h-[70vh] space-y-4 overflow-y-auto rounded-md border border-zinc-200 bg-zinc-50 p-3">
+        <section
+          className={`rounded-md border p-4 ${isDark ? "border-zinc-800 bg-zinc-900" : "border-zinc-200 bg-white"} ${
+            mobileSection !== "slides" ? "hidden md:block" : "block"
+          }`}
+        >
+          <h2 className={`mb-2 text-sm font-medium ${isDark ? "text-zinc-100" : "text-zinc-800"}`}>Slide Preview (16:9)</h2>
+          <div className={`h-[70vh] space-y-4 overflow-y-auto rounded-md border p-3 ${isDark ? "border-zinc-800 bg-zinc-950" : "border-zinc-200 bg-zinc-50"}`}>
             {slides.map((slide, index) => (
               <div key={slide.id} className="mx-auto w-full max-w-3xl">
                 <div className="mb-1.5 flex items-center justify-between px-0.5">
-                  <span className="text-[11px] text-zinc-500">Slide {index + 1}</span>
+                  <span className={`text-[11px] ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>Slide {index + 1}</span>
                   <button
                     type="button"
                     onClick={() => handleCopySlideImage(slide.id)}
                     disabled={copyingSlideId === slide.id}
-                    className="h-7 rounded-md border border-zinc-300 bg-white px-2.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    className={`h-7 rounded-md border px-2.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                      isDark
+                        ? "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
+                        : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"
+                    }`}
                   >
                     {copyingSlideId === slide.id ? "Copying..." : "Copy Image"}
                   </button>
@@ -1001,25 +1101,29 @@ Rules:
       </main>
 
       <section
-        className={`mx-auto mt-4 w-full max-w-[1700px] rounded-md border border-zinc-200 bg-white p-4 ${
+        className={`mx-auto mt-4 w-full max-w-[1700px] rounded-md border p-4 ${isDark ? "border-zinc-800 bg-zinc-900" : "border-zinc-200 bg-white"} ${
           mobileSection !== "prompt" ? "hidden md:block" : "block"
         }`}
       >
         <div className="mb-2 flex items-center justify-between gap-2">
-          <h2 className="text-sm font-medium text-zinc-800">How Formatting Works (for LLM prep)</h2>
+          <h2 className={`text-sm font-medium ${isDark ? "text-zinc-100" : "text-zinc-800"}`}>How Formatting Works (for LLM prep)</h2>
           <button
             type="button"
             onClick={handleCopyGuidePrompt}
-            className="h-8 rounded-md border border-zinc-300 bg-white px-3 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100"
+            className={`h-8 rounded-md border px-3 text-xs font-medium transition ${
+              isDark
+                ? "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
+                : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"
+            }`}
           >
             Copy LLM Prompt
           </button>
         </div>
 
-        <p className="mb-2 text-xs text-zinc-600">
+        <p className={`mb-2 text-xs ${isDark ? "text-zinc-400" : "text-zinc-600"}`}>
           Ask an LLM to convert raw lyrics into this app format first, then paste the result in Lyrics Input and fine-tune.
         </p>
-        <ul className="mb-2 text-xs text-zinc-600">
+        <ul className={`mb-2 text-xs ${isDark ? "text-zinc-400" : "text-zinc-600"}`}>
           <li># = song metadata shown at bottom of each slide until replaced</li>
           <li>/ = line break inside current slide</li>
           <li>// = new slide</li>
@@ -1030,9 +1134,11 @@ Rules:
         <textarea
           readOnly
           value={LLM_PREP_PROMPT}
-          className="h-44 w-full resize-none rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-xs leading-relaxed text-zinc-700"
+          className={`h-44 w-full resize-none rounded-md border p-3 font-mono text-xs leading-relaxed ${
+            isDark ? "border-zinc-700 bg-zinc-950 text-zinc-200" : "border-zinc-200 bg-zinc-50 text-zinc-700"
+          }`}
         />
-        {guideMessage && <p className="mt-2 text-xs text-zinc-500">{guideMessage}</p>}
+        {guideMessage && <p className={`mt-2 text-xs ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>{guideMessage}</p>}
       </section>
 
       {presentationMode !== "none" && currentSlide && (
@@ -1232,13 +1338,21 @@ Rules:
       )}
 
       {presentationMode === "none" && (
-        <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-200 bg-white/95 backdrop-blur md:hidden">
+        <nav
+          className={`fixed inset-x-0 bottom-0 z-40 border-t backdrop-blur md:hidden ${
+            isDark ? "border-zinc-800 bg-zinc-900/95" : "border-zinc-200 bg-white/95"
+          }`}
+        >
           <div className="mx-auto grid max-w-[1700px] grid-cols-3">
             <button
               type="button"
               onClick={() => setMobileSection("lyrics")}
               className={`h-12 text-xs font-medium transition ${
-                mobileSection === "lyrics" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"
+                mobileSection === "lyrics"
+                  ? "bg-zinc-900 text-white"
+                  : isDark
+                    ? "bg-zinc-900 text-zinc-300"
+                    : "bg-white text-zinc-700"
               }`}
             >
               Lyrics Input
@@ -1246,8 +1360,14 @@ Rules:
             <button
               type="button"
               onClick={() => setMobileSection("slides")}
-              className={`h-12 border-l border-r border-zinc-200 text-xs font-medium transition ${
-                mobileSection === "slides" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"
+              className={`h-12 border-l border-r text-xs font-medium transition ${
+                isDark ? "border-zinc-800" : "border-zinc-200"
+              } ${
+                mobileSection === "slides"
+                  ? "bg-zinc-900 text-white"
+                  : isDark
+                    ? "bg-zinc-900 text-zinc-300"
+                    : "bg-white text-zinc-700"
               }`}
             >
               Slides
@@ -1256,7 +1376,11 @@ Rules:
               type="button"
               onClick={() => setMobileSection("prompt")}
               className={`h-12 text-xs font-medium transition ${
-                mobileSection === "prompt" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700"
+                mobileSection === "prompt"
+                  ? "bg-zinc-900 text-white"
+                  : isDark
+                    ? "bg-zinc-900 text-zinc-300"
+                    : "bg-white text-zinc-700"
               }`}
             >
               Prompt
