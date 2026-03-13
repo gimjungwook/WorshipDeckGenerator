@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Worship Deck Generator icon">
+  <rect width="64" height="64" rx="10" fill="#111111" />
+  <path d="M24 16h16v4H34v9h7v4h-7v15h-4V33h-7v-4h7v-9h-6z" fill="#ffffff" />
+  <circle cx="47" cy="45" r="5" fill="#ffffff" />
+  <path d="M47 21v20h-3V24l3-3z" fill="#ffffff" />
+</svg>
