@@ -3,55 +3,49 @@ import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 
 const DEFAULT_INPUT = `# Example Song - Example Artist
-/* Intro */
-[[Intro]]
+## Intro
 Opening instrumental
-//
 
-//
-/* Verse 1 */
-[[Verse 1]]
-Line one of the verse / line two of the verse
+## Verse 1
+Line one of the verse
+Line two of the verse
+
 Line three of the verse
-//
-<!-- Chorus -->
-[[Chorus]]
-Chorus line one / chorus line two / chorus line three
-//
+Line four of the verse
+
+## Chorus
+Chorus line one
+Chorus line two
+Chorus line three
+
 # Second Song - Another Artist
-/* Bridge */
-[[Bridge]]
-Bridge line one / bridge line two`;
+## Bridge
+Bridge line one
+Bridge line two`;
 
 const LLM_PREP_PROMPT = `Convert the song lyrics below into Worship Deck Generator format.
 
 Output rules:
 1) Start each song section with metadata using this format:
 # Song Title - Artist
-2) Use a single slash (/) for line breaks inside the same slide.
-3) Use a double slash (//) to start a new slide.
-4) Keep each slide readable (normally 2-3 lines per slide).
-5) If a lyrical repetition needs to stay together, allow up to 4 lines on that slide maximum.
-6) Never create a one-line slide. Every non-blank lyric slide must contain at least 2 lines.
-7) If there should be a musical interlude, put an empty slide using only // with nothing between delimiters.
-8) Add section markers as standalone comment lines using C-style comments, for example:
-/* Intro */
-/* Verse 1 */
-/* Chorus */
-/* Bridge */
-9) Also place jump-link markers with double brackets before major sections, for example:
-[[Intro]]
-[[Verse 1]]
-[[Chorus]]
-[[Bridge]]
+2) Use normal line breaks for lyric lines inside each slide.
+3) Use a markdown heading like ## Verse 1, ## Chorus, ## Bridge, ## Tag, or ## Intro to mark sections.
+4) Use one empty line (press Enter twice) to start a new slide.
+5) Keep each slide readable (normally 2-3 lines per slide).
+6) If a lyrical repetition needs to stay together, allow up to 4 lines on that slide maximum.
+7) Never create a one-line slide. Every non-blank lyric slide must contain at least 2 lines.
+8) If there should be a musical interlude, leave an empty slide block between slide breaks so the app generates a pure black slide.
+9) Use markdown image syntax for image slides when needed:
+![](https://image-url)
 10) Do not accidentally repeat lyrics. Analyze the full song structure first, then output each lyric part once per intended occurrence.
 11) Only keep repeated parts when the original song intentionally repeats them in sequence.
 12) Never add divider/separator lines such as --- , ___ , === , or similar decorative lines.
-13) Return the final formatted result inside a markdown code block with plaintext language tag. Use this exact wrapper:
+13) Keep the format markdown-like and clean. Do not use C-style comments or [[double-bracket]] markers.
+14) Return the final formatted result inside a markdown code block with plaintext language tag. Use this exact wrapper:
 \`\`\`plaintext
 [formatted lyrics here]
 \`\`\`
-14) Do not add any explanation text outside the code block.
+15) Do not add any explanation text outside the code block.
 
 Lyrics to format:
 [PASTE RAW LYRICS HERE]`;
@@ -188,8 +182,24 @@ function PresentationSlide({ slide, fontFamily, lyricsFontSize, metaFontSize, ly
 }
 
 function parseSlides(rawText) {
-  const segments = rawText.split("//");
+  const segments = [];
+  const rawLines = rawText.split(/\r?\n/);
+  let currentSegmentLines = [];
+
+  rawLines.forEach((line) => {
+    if (line.trim() === "") {
+      segments.push(currentSegmentLines.join("\n"));
+      currentSegmentLines = [];
+      return;
+    }
+
+    currentSegmentLines.push(line);
+  });
+
+  segments.push(currentSegmentLines.join("\n"));
+
   let currentMeta = "";
+  let currentSection = "";
 
   const isSectionCommentLine = (line) => {
     return /^\/\*.*\*\/$/.test(line) || /^<!--.*-->$/.test(line);
@@ -218,11 +228,16 @@ function parseSlides(rawText) {
     const lyricLines = [];
     const linkTargets = [];
     let imageUrl = "";
+    let sectionChangedInSegment = false;
 
     lines.forEach((line) => {
       const trimmed = line.trim();
-      if (trimmed.startsWith("#")) {
+      if (/^#{2,6}\s+/.test(trimmed)) {
+        currentSection = trimmed.replace(/^#{2,6}\s+/, "").trim();
+        sectionChangedInSegment = currentSection.length > 0;
+      } else if (/^#\s+/.test(trimmed)) {
         currentMeta = trimmed.slice(1).trim();
+        currentSection = "";
       } else if (isSectionCommentLine(trimmed)) {
         return;
       } else if (isDividerLine(trimmed)) {
@@ -239,6 +254,8 @@ function parseSlides(rawText) {
           .filter(Boolean);
 
         if (lineLinkMatches.length > 0) {
+          currentSection = lineLinkMatches[lineLinkMatches.length - 1];
+          sectionChangedInSegment = true;
           lineLinkMatches.forEach((label) => {
             if (!linkTargets.includes(label)) {
               linkTargets.push(label);
@@ -252,10 +269,15 @@ function parseSlides(rawText) {
 
     const lyricText = lyricLines.join("\n").replace(/\s*\/\s*/g, "\n").trim();
 
+    if (sectionChangedInSegment && currentSection && !linkTargets.includes(currentSection)) {
+      linkTargets.unshift(currentSection);
+    }
+
     return {
       id: `slide-${index + 1}`,
       lyricText,
       meta: currentMeta,
+      sectionLabel: currentSection,
       linkTargets,
       imageUrl,
       isBlank: lyricText.length === 0 && !imageUrl
@@ -399,29 +421,38 @@ export default function App() {
   }, [slides, currentSlideIndex]);
 
   const presenterSectionGroups = useMemo(() => {
-    return linkGroups.map((group) => ({
-      song: group.song,
-      sections: group.links.map((link) => {
-        const slide = slides[link.slideIndex];
-        const preview = slide?.imageUrl
-          ? "(image slide)"
-          : slide?.lyricText
-            ? slide.lyricText
-                .split("\n")
-                .filter((line) => line.trim().length > 0)
-                .slice(0, 2)
-                .join(" / ")
-            : "(blank section)";
+    const groups = [];
+    const groupByMeta = new Map();
 
-        return {
-          id: link.id,
-          label: link.label,
-          slideIndex: link.slideIndex,
-          preview
-        };
-      })
-    }));
-  }, [linkGroups, slides]);
+    slides.forEach((slide, index) => {
+      const songName = slide.meta || "Unlabeled Song";
+      if (!groupByMeta.has(songName)) {
+        const group = { song: songName, sections: [] };
+        groupByMeta.set(songName, group);
+        groups.push(group);
+      }
+
+      const preview = slide.imageUrl
+        ? "(image slide)"
+        : slide.lyricText
+          ? slide.lyricText
+              .split("\n")
+              .filter((line) => line.trim().length > 0)
+              .slice(0, 2)
+              .join(" / ")
+          : "(blank slide)";
+
+      groupByMeta.get(songName).sections.push({
+        id: `section-slide-${slide.id}`,
+        label: slide.sectionLabel || slide.linkTargets[0] || `Slide ${index + 1}`,
+        slideIndex: index,
+        preview,
+        linkLabel: slide.sectionLabel || slide.linkTargets[0] || ""
+      });
+    });
+
+    return groups;
+  }, [slides]);
 
   useEffect(() => {
     if (isAudienceWindow) {
@@ -1201,10 +1232,8 @@ export default function App() {
 
 Rules:
 # Song Info
-/ line break
-// new slide
-/* Verse 1 */ section comment
-[[Chorus]] jump link marker
+## Verse 1 section heading
+empty line = new slide
 ![](https://image-url) image slide"
           />
         </section>
@@ -1305,12 +1334,11 @@ Rules:
         </p>
         <ul className={`mb-2 text-xs ${isDark ? "text-zinc-400" : "text-zinc-600"}`}>
           <li># = song metadata shown at bottom of each slide until replaced</li>
-          <li>/ = line break inside current slide</li>
-          <li>// = new slide</li>
-          <li>/* Verse 1 */ or &lt;!-- Bridge --&gt; = section comments (not rendered)</li>
-          <li>[[Chorus]] = presenter jump link marker (not rendered on slide)</li>
+          <li>Normal line breaks = lyric lines inside the current slide</li>
+          <li>## Verse 1 / ## Chorus / ## Bridge = section headings</li>
+          <li>One empty line = new slide</li>
           <li>![](https://image-url) or @image https://image-url = image slide</li>
-          <li>Nothing between // delimiters = pure black blank slide</li>
+          <li>An empty slide block between slide breaks = pure black blank slide</li>
         </ul>
         <textarea
           readOnly
