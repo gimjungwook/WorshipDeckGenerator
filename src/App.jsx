@@ -407,14 +407,24 @@ export default function App() {
 
   const activeLinkBySong = useMemo(() => {
     const active = new Map();
+    const currentSectionBySong = new Map();
 
     for (let i = 0; i <= currentSlideIndex && i < slides.length; i += 1) {
       const slide = slides[i];
       const songName = slide.meta || "Unlabeled Song";
 
+      if (slide.sectionLabel) {
+        currentSectionBySong.set(songName, slide.sectionLabel);
+      }
+
       slide.linkTargets.forEach((label, linkOrder) => {
-        active.set(songName, `${songName}-${i}-${linkOrder}`);
+        currentSectionBySong.set(songName, label);
       });
+
+      const activeSection = currentSectionBySong.get(songName);
+      if (activeSection) {
+        active.set(songName, activeSection);
+      }
     }
 
     return active;
@@ -1538,7 +1548,7 @@ empty line = new slide
                             type="button"
                             onClick={() => setCurrentSlideIndex(section.slideIndex)}
                             className={`rounded-md border p-2 text-left transition-all duration-150 ${
-                              currentSongName === group.song && activeLinkBySong.get(group.song) === section.id
+                              currentSongName === group.song && activeLinkBySong.get(group.song) === section.linkLabel
                                 ? "border-zinc-300 bg-zinc-200 text-zinc-900 shadow-sm"
                                 : "border-zinc-700 bg-zinc-900 text-zinc-200 hover:-translate-y-[1px] hover:border-zinc-500 hover:bg-zinc-800"
                             }`}
@@ -1548,7 +1558,7 @@ empty line = new slide
                             </p>
                             <p
                               className={`mt-1 leading-snug ${
-                                currentSongName === group.song && activeLinkBySong.get(group.song) === section.id
+                                currentSongName === group.song && activeLinkBySong.get(group.song) === section.linkLabel
                                   ? "text-zinc-700"
                                   : "text-zinc-400"
                               }`}
