@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
+import QRCode from "qrcode";
+import { createPresentationBus } from "./presentationBus";
 
 const DEFAULT_INPUT = `# Example Song - Example Artist
 ## Intro
@@ -75,10 +77,28 @@ const DEFAULT_SETTINGS = {
   lyricsLineHeight: 1.6
 };
 
-const PRESENTATION_CHANNEL = "worshipDeck.presentation";
 const SLIDE_BASE_WIDTH = 1600;
 const SLIDE_BASE_HEIGHT = 900;
 const URL_LYRICS_PARAM = "lyrics";
+
+function makeRoomId() {
+  let code = "";
+  try {
+    const bytes = new Uint8Array(5);
+    window.crypto.getRandomValues(bytes);
+    code = Array.from(bytes)
+      .map((byte) => byte.toString(36))
+      .join("")
+      .replace(/[^a-z0-9]/g, "")
+      .slice(0, 6);
+  } catch {
+    code = "";
+  }
+  if (code.length < 6) {
+    code = `${code}${Math.random().toString(36).slice(2)}`.slice(0, 6);
+  }
+  return `worshipdeck${code}`;
+}
 
 function encodeLyricsForUrl(value) {
   try {
@@ -290,6 +310,19 @@ export default function App() {
     return new URLSearchParams(window.location.search).get("audience") === "1";
   }, []);
 
+  const isControllerWindow = useMemo(() => {
+    return new URLSearchParams(window.location.search).get("controller") === "1";
+  }, []);
+
+  const controllerRoomId = useMemo(() => {
+    return new URLSearchParams(window.location.search).get("room") || "";
+  }, []);
+
+  const [presenterRoomId] = useState(() => makeRoomId());
+  const [showQr, setShowQr] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState("");
+  const [linkStatus, setLinkStatus] = useState("idle");
+
   const initialInput = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const encodedLyrics = params.get(URL_LYRICS_PARAM);
@@ -331,6 +364,11 @@ export default function App() {
   const pendingUploadTargetRef = useRef("end");
   const presenterLayoutRef = useRef(null);
   const presenterLeftPaneRef = useRef(null);
+  const busRef = useRef(null);
+  const busHandlerRef = useRef(() => {});
+  const busStatusRef = useRef(() => {});
+  const applyControlRef = useRef(() => {});
+  const latestPayloadRef = useRef(null);
   const [audienceState, setAudienceState] = useState({
     slides: [],
     currentSlideIndex: 0,
@@ -464,8 +502,88 @@ export default function App() {
     return groups;
   }, [slides]);
 
+  const isPresenterHost = !isAudienceWindow && !isControllerWindow;
+
+  latestPayloadRef.current = {
+    slides,
+    currentSlideIndex,
+    fontFamily,
+    lyricsFontSize,
+    metaFontSize,
+    lyricsLineHeight
+  };
+
+  applyControlRef.current = (action, payload) => {
+    if (action === "next") {
+      setCurrentSlideIndex((prev) => Math.min(prev + 1, slides.length - 1));
+    } else if (action === "prev") {
+      setCurrentSlideIndex((prev) => Math.max(prev - 1, 0));
+    } else if (action === "home") {
+      setCurrentSlideIndex(0);
+    } else if (action === "end") {
+      setCurrentSlideIndex(Math.max(slides.length - 1, 0));
+    } else if (action === "goto" && typeof payload === "number") {
+      setCurrentSlideIndex(Math.min(Math.max(payload, 0), slides.length - 1));
+    } else if (action === "stop") {
+      setPresentationMode("none");
+    }
+  };
+
+  busHandlerRef.current = (message) => {
+    if (!message || typeof message !== "object") {
+      return;
+    }
+
+    if (message.type === "sync" && message.payload) {
+      setAudienceState(message.payload);
+      return;
+    }
+
+    if (message.type === "stop") {
+      setAudienceState((prev) => ({ ...prev, slides: [], currentSlideIndex: 0 }));
+      return;
+    }
+
+    if (message.type === "__connected") {
+      // controller just paired with the host: request current state
+      if (isControllerWindow) {
+        busRef.current?.post({ type: "audience-ready" });
+      }
+      return;
+    }
+
+    if (isPresenterHost && presentationMode !== "none") {
+      if (message.type === "audience-ready") {
+        busRef.current?.post({ type: "sync", payload: latestPayloadRef.current });
+      } else if (message.type === "control") {
+        applyControlRef.current(message.action, message.payload);
+      }
+    }
+  };
+
+  busStatusRef.current = (status) => {
+    if (!status) {
+      return;
+    }
+    if (status.type === "connected" || status.type === "peer-joined") {
+      setLinkStatus("connected");
+    } else if (status.type === "open") {
+      setLinkStatus("waiting");
+    } else if (status.type === "disconnected") {
+      setLinkStatus("reconnecting");
+    } else if (status.type === "peer-left") {
+      setLinkStatus(status.count > 0 ? "connected" : "waiting");
+    } else if (status.type === "error") {
+      setLinkStatus((prev) => (prev === "connected" ? "connected" : "error"));
+    }
+  };
+
+  const sendControl = (action, payload) => {
+    busRef.current?.post({ type: "control", action, payload });
+  };
+
   useEffect(() => {
-    if (isAudienceWindow) {
+    if (!isPresenterHost) {
       return;
     }
 
@@ -485,7 +603,7 @@ export default function App() {
     }, 220);
 
     return () => window.clearTimeout(timer);
-  }, [input, isAudienceWindow]);
+  }, [input, isPresenterHost]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.lyricsFontSize, String(lyricsFontSize));
@@ -508,29 +626,41 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    if (!isAudienceWindow || typeof BroadcastChannel === "undefined") {
+    const needsBus = isAudienceWindow || isControllerWindow || presentationMode !== "none";
+    if (!needsBus) {
       return;
     }
 
-    const channel = new BroadcastChannel(PRESENTATION_CHANNEL);
+    const role = isControllerWindow ? "controller" : isAudienceWindow ? "audience" : "presenter";
+    const roomId = isControllerWindow ? controllerRoomId : presenterRoomId;
 
-    channel.onmessage = (event) => {
-      const message = event.data;
-      if (message?.type === "sync" && message.payload) {
-        setAudienceState(message.payload);
+    if (role === "controller" && !roomId) {
+      // no room code in the URL: nothing to connect to
+      return;
+    }
+
+    setLinkStatus(role === "audience" ? "idle" : "connecting");
+
+    const bus = createPresentationBus({
+      role,
+      roomId,
+      onMessage: (message) => busHandlerRef.current(message),
+      onStatus: (status) => busStatusRef.current(status)
+    });
+    busRef.current = bus;
+
+    if (isAudienceWindow) {
+      bus.post({ type: "audience-ready" });
+    }
+
+    return () => {
+      bus.close();
+      if (busRef.current === bus) {
+        busRef.current = null;
       }
-      if (message?.type === "stop") {
-        setAudienceState((prev) => ({
-          ...prev,
-          slides: [],
-          currentSlideIndex: 0
-        }));
-      }
+      setLinkStatus("idle");
     };
-
-    channel.postMessage({ type: "audience-ready" });
-    return () => channel.close();
-  }, [isAudienceWindow]);
+  }, [isAudienceWindow, isControllerWindow, presentationMode, controllerRoomId, presenterRoomId]);
 
   useEffect(() => {
     if (!isAudienceWindow) {
@@ -560,39 +690,18 @@ export default function App() {
   }, [isAudienceWindow]);
 
   useEffect(() => {
-    if (isAudienceWindow || presentationMode !== "presenter" || typeof BroadcastChannel === "undefined") {
+    if (!isPresenterHost || presentationMode === "none") {
       return;
     }
 
-    const payload = {
-      slides,
-      currentSlideIndex,
-      fontFamily,
-      lyricsFontSize,
-      metaFontSize,
-      lyricsLineHeight
-    };
-    const channel = new BroadcastChannel(PRESENTATION_CHANNEL);
+    const post = () => busRef.current?.post({ type: "sync", payload: latestPayloadRef.current });
 
-    const sync = () => {
-      channel.postMessage({ type: "sync", payload });
-    };
+    post();
+    const timer = window.setInterval(post, 700);
 
-    channel.onmessage = (event) => {
-      if (event.data?.type === "audience-ready") {
-        sync();
-      }
-    };
-
-    sync();
-    const timer = window.setInterval(sync, 700);
-
-    return () => {
-      window.clearInterval(timer);
-      channel.close();
-    };
+    return () => window.clearInterval(timer);
   }, [
-    isAudienceWindow,
+    isPresenterHost,
     presentationMode,
     slides,
     currentSlideIndex,
@@ -603,7 +712,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (isAudienceWindow || presentationMode !== "none") {
+    if (isAudienceWindow || isControllerWindow || presentationMode !== "none") {
       return;
     }
 
@@ -612,16 +721,14 @@ export default function App() {
     }
     audienceWindowRef.current = null;
 
-    if (typeof BroadcastChannel !== "undefined") {
-      const channel = new BroadcastChannel(PRESENTATION_CHANNEL);
-      channel.postMessage({ type: "stop" });
-      channel.close();
-    }
+    const bus = createPresentationBus();
+    bus.post({ type: "stop" });
+    window.setTimeout(() => bus.close(), 600);
 
     if (document.fullscreenElement && document.exitFullscreen) {
       document.exitFullscreen().catch(() => {});
     }
-  }, [presentationMode, isAudienceWindow]);
+  }, [presentationMode, isAudienceWindow, isControllerWindow]);
 
   useEffect(() => {
     if (presentationMode === "none") {
@@ -689,6 +796,42 @@ export default function App() {
       document.body.style.overflow = "";
     };
   }, [presentationMode]);
+
+  useEffect(() => {
+    if (!isControllerWindow) {
+      return;
+    }
+
+    const activeCard = document.getElementById("ctrl-active");
+    if (activeCard) {
+      activeCard.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, [isControllerWindow, audienceState.currentSlideIndex, audienceState.slides]);
+
+  const controllerUrl = `${window.location.origin}${window.location.pathname}?controller=1&room=${presenterRoomId}`;
+
+  useEffect(() => {
+    if (!showQr) {
+      return;
+    }
+
+    let cancelled = false;
+    QRCode.toDataURL(controllerUrl, { width: 320, margin: 1 })
+      .then((url) => {
+        if (!cancelled) {
+          setQrDataUrl(url);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setQrDataUrl("");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showQr, controllerUrl]);
 
   const captureSlide = (element) => {
     return html2canvas(element, {
@@ -913,6 +1056,17 @@ export default function App() {
     }
   };
 
+  const handleCopyRemoteUrl = async () => {
+    if (!navigator.clipboard) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(controllerUrl);
+      setPresentationMessage("Phone remote URL copied.");
+    } catch {
+      // ignore
+    }
+  };
 
   const startMainDividerDrag = (event) => {
     if (!presenterLayoutRef.current) {
@@ -980,6 +1134,115 @@ export default function App() {
     );
   }
 
+  if (isControllerWindow) {
+    const controllerSlides = Array.isArray(audienceState.slides) ? audienceState.slides : [];
+    const controllerIndex = audienceState.currentSlideIndex || 0;
+    const connected = controllerSlides.length > 0;
+
+    const controllerGroups = [];
+    const controllerByMeta = new Map();
+    controllerSlides.forEach((slide, index) => {
+      const song = slide.meta || "Unlabeled Song";
+      if (!controllerByMeta.has(song)) {
+        const group = { song, items: [] };
+        controllerByMeta.set(song, group);
+        controllerGroups.push(group);
+      }
+
+      const title = slide.sectionLabel || (slide.linkTargets && slide.linkTargets[0]) || `Slide ${index + 1}`;
+      const body = slide.imageUrl
+        ? "(image slide)"
+        : slide.isBlank
+          ? "(blank slide)"
+          : slide.lyricText;
+
+      controllerByMeta.get(song).items.push({ index, title, body });
+    });
+
+    return (
+      <div className="flex min-h-screen flex-col bg-zinc-950 text-zinc-100">
+        <header className="sticky top-0 z-10 border-b border-zinc-800 bg-zinc-950/95 px-4 py-3 backdrop-blur">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold">Remote</span>
+            <span className="text-xs text-zinc-400">
+              {linkStatus === "connected"
+                ? connected
+                  ? `${controllerIndex + 1} / ${controllerSlides.length}`
+                  : "연결됨"
+                : linkStatus === "reconnecting"
+                  ? "재연결 중..."
+                  : linkStatus === "error" && !controllerRoomId
+                    ? "room 코드 없음"
+                    : "연결 중..."}
+            </span>
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-y-auto px-3 py-3 pb-28">
+          {!connected ? (
+            <div className="mt-24 text-center text-sm leading-relaxed text-zinc-500">
+              프레젠테이션 대기 중입니다.
+              <br />
+              노트북에서 Presenter 또는 Fullscreen을 시작하세요.
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {controllerGroups.map((group) => (
+                <div key={`ctrl-${group.song}`}>
+                  <p className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
+                    {group.song}
+                  </p>
+                  <div className="space-y-2">
+                    {group.items.map((item) => {
+                      const active = item.index === controllerIndex;
+                      return (
+                        <button
+                          key={`ctrl-slide-${item.index}`}
+                          id={active ? "ctrl-active" : undefined}
+                          type="button"
+                          onClick={() => sendControl("goto", item.index)}
+                          className={`w-full rounded-lg border p-3 text-left transition ${
+                            active
+                              ? "border-emerald-400 bg-emerald-500/15"
+                              : "border-zinc-800 bg-zinc-900 active:bg-zinc-800"
+                          }`}
+                        >
+                          <p className={`text-sm font-semibold ${active ? "text-emerald-300" : "text-zinc-200"}`}>
+                            {item.title}
+                          </p>
+                          <p className="mt-1 whitespace-pre-line text-sm leading-snug text-zinc-400">
+                            {item.body}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </main>
+
+        <nav className="fixed inset-x-0 bottom-0 z-10 grid grid-cols-2 gap-2 border-t border-zinc-800 bg-zinc-950/95 px-3 py-3 backdrop-blur">
+          <button
+            type="button"
+            onClick={() => sendControl("prev")}
+            className="h-14 rounded-lg border border-zinc-700 bg-zinc-900 text-base font-semibold text-zinc-100 active:bg-zinc-800"
+          >
+            이전
+          </button>
+          <button
+            type="button"
+            onClick={() => sendControl("next")}
+            className="h-14 rounded-lg border border-zinc-700 bg-zinc-900 text-base font-semibold text-zinc-100 active:bg-zinc-800"
+          >
+            다음
+          </button>
+        </nav>
+      </div>
+    );
+  }
+
   return (
     <div className={`min-h-screen p-4 pb-20 md:p-6 md:pb-6 ${isDark ? "bg-zinc-950 text-zinc-100" : "bg-zinc-100 text-zinc-900"}`}>
       <header className="mx-auto mb-4 flex w-full max-w-[1700px] flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -1025,6 +1288,17 @@ export default function App() {
             }`}
           >
             Start Presenter
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowQr(true)}
+            className={`h-10 rounded-md border px-4 text-sm font-medium transition ${
+              isDark
+                ? "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
+                : "border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-100"
+            }`}
+          >
+            Phone Remote (QR)
           </button>
           <button
             type="button"
@@ -1628,6 +1902,66 @@ empty line = new slide
             </button>
           </div>
         </nav>
+      )}
+
+      {showQr && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setShowQr(false)}
+        >
+          <div
+            className={`w-full max-w-sm rounded-xl border p-5 text-center ${
+              isDark ? "border-zinc-700 bg-zinc-900 text-zinc-100" : "border-zinc-200 bg-white text-zinc-900"
+            }`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 className="text-base font-semibold">Phone Remote</h2>
+            <p className={`mt-1 text-xs ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>
+              같은 Wi-Fi의 폰 카메라로 QR을 스캔하세요.
+            </p>
+
+            <div className="mx-auto mt-4 flex h-[260px] w-[260px] items-center justify-center rounded-lg bg-white">
+              {qrDataUrl ? (
+                <img src={qrDataUrl} alt="Phone remote QR code" className="h-[240px] w-[240px]" />
+              ) : (
+                <span className="text-xs text-zinc-500">Generating...</span>
+              )}
+            </div>
+
+            <p className={`mt-3 break-all text-[11px] ${isDark ? "text-zinc-500" : "text-zinc-500"}`}>
+              {controllerUrl}
+            </p>
+
+            <p className={`mt-2 text-xs ${isDark ? "text-zinc-400" : "text-zinc-500"}`}>
+              {linkStatus === "connected"
+                ? "폰 연결됨"
+                : presentationMode === "none"
+                  ? "Presenter 또는 Fullscreen을 시작하면 폰이 자동 연결됩니다."
+                  : "폰 연결 대기 중..."}
+            </p>
+
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={handleCopyRemoteUrl}
+                className={`h-10 flex-1 rounded-md border text-sm font-medium transition ${
+                  isDark
+                    ? "border-zinc-700 bg-zinc-800 text-zinc-100 hover:bg-zinc-700"
+                    : "border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-100"
+                }`}
+              >
+                Copy URL
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowQr(false)}
+                className="h-10 flex-1 rounded-md border border-zinc-900 bg-zinc-900 text-sm font-medium text-white transition hover:bg-zinc-700"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
